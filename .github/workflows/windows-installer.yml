@@ -1,0 +1,125 @@
+name: Windows installer
+
+# Builds a ready-to-run Kadr installer in the cloud, so no one needs Rust,
+# Visual Studio or Node on their own machine.
+#
+# Where to get the exe:
+#   * Actions → "Windows installer" → Run workflow → the run's Artifacts
+#     section has a zip containing the installer and the portable exe.
+#   * Push a tag (`git tag v1.0.17 && git push --tags`) and the same build is
+#     attached to a GitHub Release, so the download link is stable.
+#
+# Deliberately not inherited from upstream: their release workflow signs
+# updater artifacts and needs TAURI_SIGNING_PRIVATE_KEY in repository secrets.
+# A personal fork has no such key, and a release job that fails on a missing
+# secret is worse than no release job. Signing is opt-in below.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      slim:
+        description: "Slim build (no PP-OCR/ONNX): ~7 MB installer instead of ~9 MB"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep the debug symbols out of the cached build: the cache is size-limited
+  # and the release binary is stripped anyway.
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: Build (${{ inputs.slim && 'slim' || 'full' }})
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Rust
+        # The runner's default host triple is already *-pc-windows-msvc, so no
+        # toolchain input here: passing one to @stable is how these jobs end up
+        # installing a GNU toolchain and then failing to link.
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          # The slim and full builds produce different binaries; keep their
+          # caches apart so one does not evict the other's dependencies.
+          key: ${{ inputs.slim && 'slim' || 'full' }}
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck and unit tests
+        # Cheap insurance before a 20-minute Rust build: a TS error or a broken
+        # hotkey matcher should fail in two minutes, not in twenty.
+        run: |
+          npx tsc --noEmit
+          npx vitest run
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          if ("${{ inputs.slim }}" -eq "true") {
+            npm run dist:slim
+          } else {
+            npm run dist
+          }
+
+      - name: Collect build outputs
+        shell: pwsh
+        run: |
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          $out = "dist-out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          if (Test-Path $nsis) {
+            Copy-Item "$nsis/*.exe" $out -Force
+          }
+          $portable = "src-tauri/target/release/kadr.exe"
+          if (Test-Path $portable) {
+            Copy-Item $portable "$out/kadr-portable.exe" -Force
+          }
+          Get-ChildItem $out | ForEach-Object {
+            "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB)
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kadr-windows-${{ github.sha }}-${{ inputs.slim && 'slim' || 'full' }}
+          path: dist-out/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to the release
+        # Only for tags / published releases, so every push does not create a
+        # release. The tag is the version marker.
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-out/*
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true

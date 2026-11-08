@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "kadr",
+  "version": "1.0.16",
+  "identifier": "app.kadr.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$CONFIG/kensaku/thumbs/**",
+          "$APPCONFIG/thumbs/**",
+          "$APPLOCALDATA/kensaku/thumbs/**",
+          "$APPDATA/kensaku/thumbs/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": false,
+    "publisher": "Kadr",
+    "copyright": "Copyright © 2026 Kadr",
+    "category": "Productivity",
+    "shortDescription": "Fast local search for images, videos and files.",
+    "longDescription": "Kadr indexes filenames, file contents, PDFs, Office documents and OCR'd images into one local index, and files what you find into a collection folder with a single key. Nothing leaves the machine.",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis/hooks.nsh",
+        "installerIcon": "./icons/icon.ico",
+        "uninstallerIcon": "./icons/icon.ico"
+      }
+    },
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
+  }
+}
