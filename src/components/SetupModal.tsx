@@ -72,6 +72,13 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
   const [indraPackStatus, setIndraPackStatus] = useState<ModelsStatus | null>(null);
   const [indraPackBusy, setIndraPackBusy] = useState(false);
   const [selectedOcrEngine, setSelectedOcrEngine] = useState<OcrEngine | null>(null);
+  /* Set when the user walks past the OCR step without picking an engine.
+     Images and videos stay searchable by name, path and metadata without OCR;
+     only text *inside* a screenshot needs it. Forcing a 6-27 MB download on
+     someone who just wants to find their photos is the wrong default, so the
+     step is skippable and the choice is persisted as "OCR off" rather than
+     left to whatever the engine probe happened to select. */
+  const [ocrSkipped, setOcrSkipped] = useState(false);
   const [packError, setPackError] = useState<string | null>(null);
   const [shortcut, setShortcut] = useState("Alt+Space");
   // New installs default to launcher mode: one shortcut away, always.
@@ -334,6 +341,10 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
         // Keep the backend's engine choice when the user did not touch the
         // radios (e.g. status never loaded) instead of resetting to a name.
         ocrEngine: selectedOcrEngine ?? (ocrStatus ? pickEngine(ocrStatus) : "tesseract"),
+        // Skipping the step turns OCR off outright. Leaving the engine name in
+        // place would keep re-queueing images for text extraction on every
+        // crawl, which is the cost the user just declined.
+        ocrEnabled: ocrSkipped ? false : undefined,
         appMode,
       });
       // The default text model downloads without asking. Failure is not fatal:
@@ -610,12 +621,16 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
           <div className="space-y-2">
             <h1 className="t-title text-fg">{t("ocr.title")}</h1>
             <p className="t-lead text-muted">{t("ocr.lead")}</p>
+            <p className="pt-1 text-[12px] leading-[18px] text-subtle">{t("ocr.skipNote")}</p>
           </div>
 
           <div className="flex flex-col gap-2">
             <EngineOption
               selected={selectedOcrEngine === "tesseract"}
-              onSelect={() => setSelectedOcrEngine("tesseract")}
+              onSelect={() => {
+                setSelectedOcrEngine("tesseract");
+                setOcrSkipped(false);
+              }}
               name="Tesseract"
               note={t("ocr.tesseractNote")}
               ready={Boolean(ocrStatus?.available)}
@@ -636,7 +651,10 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
             />
             <EngineOption
               selected={selectedOcrEngine === "accurate"}
-              onSelect={() => setSelectedOcrEngine("accurate")}
+              onSelect={() => {
+                setSelectedOcrEngine("accurate");
+                setOcrSkipped(false);
+              }}
               name="PP-OCRv6"
               note={t("ocr.ppocrNote")}
               ready={Boolean(ocrPackStatus?.ready)}
@@ -670,7 +688,10 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
             />
             <EngineOption
               selected={selectedOcrEngine === "indra"}
-              onSelect={() => setSelectedOcrEngine("indra")}
+              onSelect={() => {
+                setSelectedOcrEngine("indra");
+                setOcrSkipped(false);
+              }}
               name="Indra OCR"
               note={t("ocr.indraNote")}
               ready={Boolean(indraPackStatus?.ready)}
@@ -776,7 +797,9 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
         <p className="text-[12px] text-subtle">
           {step === 0
             ? t("footer.folders", { count: selectedDirs.length })
-            : ocrReady
+            : step === 1 && ocrSkipped
+              ? t("ocr.skippedNote")
+              : ocrReady
               ? t("footer.staysLocal")
               : t("footer.downloadToContinue", {
                   engine:
@@ -799,14 +822,29 @@ export function SetupModal({ onSetupCompleted }: { onSetupCompleted: () => void 
             </button>
           )}
           {step === 1 && (
-            <button
-              type="button"
-              onClick={() => setStep(2)}
-              disabled={selectedDirs.length === 0 || !ocrReady}
-              className="btn btn-primary h-10 px-5"
-            >
-              {t("footer.continue")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
-            </button>
+            <>
+              {/* Always available, not only while the download is missing:
+                  someone who does not want OCR at all should not have to
+                  download a pack first to say so. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOcrSkipped(true);
+                  setStep(2);
+                }}
+                className="btn btn-ghost h-10"
+              >
+                {t("footer.skip")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                disabled={selectedDirs.length === 0 || !ocrReady}
+                className="btn btn-primary h-10 px-5"
+              >
+                {t("footer.continue")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            </>
           )}
           {step === 2 && (
             <button

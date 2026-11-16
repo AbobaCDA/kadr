@@ -6,6 +6,21 @@ versioning: [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added (Kadr fork)
+- **The OCR step of the first-run wizard can be skipped.** Photos and videos
+  are indexed by name, path and metadata without OCR -- only text *inside* a
+  screenshot needs an engine -- yet the wizard refused to continue until one
+  was downloaded. A "Skip" button now moves on and saves `ocr_enabled: false`
+  (not just an unset engine, so images are not re-queued for extraction on
+  every crawl); Settings -> OCR turns it back on.
+- **The collection folder is excluded from the index.** `Ctrl+D` *moves* a
+  file into the folder you picked, so crawling that folder listed every
+  collected file a second time under its new name -- indistinguishable from a
+  duplicate in the results. The subtree is now pruned by path (not by name, so
+  an unrelated folder that happens to be called the same stays searchable) in
+  both the crawler and the watcher; entries already indexed there disappear on
+  the next scan, because a path that is no longer walked is reconciled away.
+  A collection folder that *is* a crawl root is not pruned: that would index
+  nothing at all.
 - **Cloud builds.** `.github/workflows/windows-installer.yml` builds the
   Windows installer on a GitHub runner: artifacts on every push/button, a
   Release with the exe attached on a `v*` tag, and a `slim` toggle for the

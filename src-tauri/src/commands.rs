@@ -1109,6 +1109,12 @@ pub async fn complete_setup(
     excluded_dirs: Vec<String>,
     shortcut: Option<String>,
     ocr_engine: Option<String>,
+    // `Some(false)` when the wizard's OCR step was skipped: the engine name
+    // stays in the config for later, but no image is queued for text
+    // extraction. `None` leaves the current setting alone. (A `///` doc comment
+    // is rejected here: attributes on function parameters are limited to the
+    // built-in allow/cfg/... set.)
+    ocr_enabled: Option<bool>,
     app_mode: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
@@ -1125,6 +1131,9 @@ pub async fn complete_setup(
         && [crate::ocr::TESSERACT, crate::ocr::ACCURATE, crate::ocr::INDRA].contains(&engine.as_str())
     {
         config.ocr_engine = engine;
+    }
+    if let Some(enabled) = ocr_enabled {
+        config.ocr_enabled = enabled;
     }
     if let Some(mode) = app_mode
         && (mode == "launcher" || mode == "app")

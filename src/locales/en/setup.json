@@ -66,7 +66,9 @@
     "downloadingPercent": "Downloading {{percent}}%",
     "ready": "Ready",
     "downloading": "Downloading",
-    "download": "Download"
+    "download": "Download",
+    "skipNote": "You can skip this. Photos and videos stay searchable by name and metadata either way; OCR only lets you find text inside a screenshot. You can turn it on later in Settings.",
+    "skippedNote": "OCR is off. Turn it on in Settings when you need it."
   },
   "mode": {
     "title": "How should Kadr open?",
@@ -93,7 +95,8 @@
     "downloadToContinue": "Download {{engine}} to continue.",
     "back": "Back",
     "continue": "Continue",
-    "startIndexing": "Start indexing"
+    "startIndexing": "Start indexing",
+    "skip": "Skip"
   },
   "setupFailed": "Setup failed: {{error}}"
 }

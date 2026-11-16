@@ -66,7 +66,9 @@
     "downloadingPercent": "正在下载 {{percent}}%",
     "ready": "就绪",
     "downloading": "正在下载",
-    "download": "下载"
+    "download": "下载",
+    "skipNote": "可以跳过此步骤。照片和视频仍可按名称和元数据搜索；OCR 仅用于查找截图中的文字。之后可在设置中开启。",
+    "skippedNote": "OCR 已关闭。需要时可在设置中开启。"
   },
   "mode": {
     "title": "Kadr 该如何打开？",
@@ -93,7 +95,8 @@
     "downloadToContinue": "下载 {{engine}} 以继续。",
     "back": "返回",
     "continue": "继续",
-    "startIndexing": "开始索引"
+    "startIndexing": "开始索引",
+    "skip": "跳过"
   },
   "setupFailed": "设置失败：{{error}}"
 }
