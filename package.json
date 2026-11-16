@@ -11,6 +11,7 @@
     "test": "vitest run",
     "dist": "node tools/compact-profile.mjs && tauri build --bundles nsis",
     "dist:dir": "node tools/compact-profile.mjs && tauri build --no-bundle",
+    "dist:slim:dir": "node tools/compact-profile.mjs --slim && tauri build --no-bundle",
     "dist:slim": "node tools/compact-profile.mjs --slim && tauri build --bundles nsis",
     "size:full": "node tools/compact-profile.mjs --full",
     "size:slim": "node tools/compact-profile.mjs --slim"

@@ -9,8 +9,10 @@
 GitHub соберёт exe за тебя, на своей виндовой машине. Твой компьютер нужен только чтобы
 залить код — 30 МБ интернета, без Rust, без Visual Studio, без Node.
 
+Самый короткий путь — двойной клик по **`ЗАПУСТИТЬ-СБОРКУ.cmd`** в папке `kadr`
+(он сам переходит в нужный каталог). Или из PowerShell, открытого **в этой папке**:
+
 ```powershell
-cd C:\путь\до\kadr
 powershell -ExecutionPolicy Bypass -File tools\publish.ps1
 ```
 
@@ -122,6 +124,7 @@ src-tauri\target\release\bundle\nsis\kadr_1.0.16_x64-setup.exe
 | Антивирус ругается на установщик | Ожидаемо для неподписанного бинарника. Подпиши через `signtool` или добавь исключение. |
 | Хочется меньше размер | `npm run dist:slim` (~7 МБ) или `npm run size:slim` + обычная сборка. |
 | Хочу и в облаке, и slim | Actions → Run workflow → галочка **slim**. |
+| `-File tools\publish.ps1` не существует | PowerShell открыт не в папке `kadr`: `Get-Location`, затем `cd` в неё, либо запусти `ЗАПУСТИТЬ-СБОРКУ.cmd`. |
 | Release-шаг упал с 403 | Settings → Actions → General → Workflow permissions → Read and write. |
 | Другое имя/иконка | `tools/rebrand.sh "Имя" "app.твой.id" "exe-name"`, затем `npm run dist`. |
 

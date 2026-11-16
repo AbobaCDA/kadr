@@ -31,7 +31,52 @@ param(
     [switch]$SkipPermissionFix
 )
 
-$ErrorActionPreference = 'Stop'
+# 'Continue', not 'Stop'. Windows PowerShell 5.1 turns ANY line a native tool
+# writes to stderr into a terminating error, even a harmless one such as
+# "error: No such remote: 'origin'". git talks to stderr all the time, so the
+# script checks exit codes itself and throws its own messages instead.
+$ErrorActionPreference = 'Continue'
+
+# ---------------------------------------------------------------- helpers
+# Runs a native tool, merges its stderr into the output and reports the exit
+# code. Never throws: callers decide what a non-zero code means.
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string]$Exe,
+        [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+    $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { "$_" })
+    [pscustomobject]@{ Output = $out; Code = $LASTEXITCODE }
+}
+
+function Invoke-Git {
+    param([Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    Invoke-Native -Exe 'git' -Arguments $Arguments
+}
+
+function Test-GitRemote([string]$Name) {
+    $result = Invoke-Git 'remote'
+    if ($result.Code -ne 0) { return $false }
+    foreach ($line in $result.Output) {
+        if ($line.Trim() -eq $Name) { return $true }
+    }
+    return $false
+}
+
+# Points 'origin' at the repository, whether or not it already existed.
+# 'set-url' would fail on a missing remote and 'add' on an existing one, so the
+# two cases are checked instead of blindly deleting what is not there.
+function Set-GitOrigin([string]$Url) {
+    if (Test-GitRemote 'origin') {
+        $result = Invoke-Git 'remote' 'set-url' 'origin' $Url
+        if ($result.Code -eq 0) { Write-Ok "remote origin -> $Url" ; return $true }
+        return $false
+    }
+    $result = Invoke-Git 'remote' 'add' 'origin' $Url
+    if ($result.Code -eq 0) { Write-Ok "remote origin -> $Url" ; return $true }
+    Write-Warn2 "could not add the remote: $($result.Output -join ' ')"
+    return $false
+}
 
 function Write-Step([string]$Text) {
     Write-Host ""
@@ -63,30 +108,32 @@ git is not installed. Install it and re-run:
 Or install GitHub Desktop (which bundles git) and use "Add existing repository".
 "@
 }
-Write-Ok (& git --version)
+$version = Invoke-Git '--version'
+Write-Ok ($version.Output -join ' ')
 
 if (-not (Test-Path '.git')) {
-    & git init | Out-Null
-    & git symbolic-ref HEAD refs/heads/master
+    $init = Invoke-Git 'init'
+    if ($init.Code -ne 0) { throw "git init failed: $($init.Output -join ' ')" }
+    [void](Invoke-Git 'symbolic-ref' 'HEAD' 'refs/heads/master')
     Write-Ok "initialised a fresh repository on branch master"
 } else {
     Write-Ok "existing repository"
 }
 
 # A commit identity is required; use a local (repo-only) one if git has none.
-$email = & git config user.email
-if (-not $email) {
-    & git config user.email "$User@users.noreply.github.com"
-    & git config user.name $User
+$email = (Invoke-Git 'config' 'user.email').Output
+if (-not ($email -join '').Trim()) {
+    [void](Invoke-Git 'config' 'user.email' "$User@users.noreply.github.com")
+    [void](Invoke-Git 'config' 'user.name' $User)
     Write-Ok "set a repository-local commit identity ($User)"
 }
 
 # --------------------------------------------------------------- commit
 
 Write-Step "2/4  commit"
-& git add -A
-& git commit -q -m "Kadr: local search with full-result paging and the collection skill" 2>$null
-if ($LASTEXITCODE -eq 0) {
+[void](Invoke-Git 'add' '-A')
+$commit = Invoke-Git 'commit' '-q' '-m' 'Kadr: local search with full-result paging and the collection skill'
+if ($commit.Code -eq 0) {
     Write-Ok "committed"
 } else {
     Write-Ok "nothing new to commit"
@@ -99,20 +146,21 @@ $gh = Get-Command gh -ErrorAction SilentlyContinue
 $pushed = $false
 
 if ($gh) {
-    $auth = & gh auth status 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $auth = Invoke-Native 'gh' 'auth' 'status'
+    if ($auth.Code -eq 0) {
         $visibility = if ($Private) { '--private' } else { '--public' }
-        & gh repo view "$User/$Repo" 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $view = Invoke-Native 'gh' 'repo' 'view' "$User/$Repo"
+        if ($view.Code -eq 0) {
             Write-Ok "repository $User/$Repo already exists; pushing to it"
-            & git remote remove origin 2>$null | Out-Null
-            & git remote add origin "https://github.com/$User/$Repo.git"
-            & git push -u origin master
+            if (Set-GitOrigin "https://github.com/$User/$Repo.git") {
+                $push = Invoke-Git 'push' '-u' 'origin' 'master'
+                if ($push.Code -eq 0) { $pushed = $true }
+            }
         } else {
-            & gh repo create "$User/$Repo" $visibility --source . --remote origin --push
+            $create = Invoke-Native 'gh' 'repo' 'create' "$User/$Repo" $visibility '--source' '.' '--remote' 'origin' '--push'
+            if ($create.Code -eq 0) { $pushed = $true }
         }
-        if ($LASTEXITCODE -eq 0) {
-            $pushed = $true
+        if ($pushed) {
             Write-Ok "pushed to https://github.com/$User/$Repo"
         } else {
             Write-Warn2 "gh could not create/push the repository; falling back to manual steps"
@@ -123,8 +171,7 @@ if ($gh) {
 }
 
 if (-not $pushed) {
-    & git remote remove origin 2>$null | Out-Null
-    & git remote add origin "https://github.com/$User/$Repo.git"
+    [void](Set-GitOrigin "https://github.com/$User/$Repo.git")
     Write-Host ""
     Write-Host "Create the repository, then push:" -ForegroundColor White
     Write-Host ""
@@ -142,13 +189,14 @@ if (-not $pushed) {
 
 if ($pushed -and -not $SkipPermissionFix) {
     Write-Step "4/4  Actions permissions"
-    if ($gh -and (& gh auth status 2>&1 | Out-String) -notmatch 'not logged') {
+    $ghOk = $gh -and ((Invoke-Native 'gh' 'auth' 'status').Code -eq 0)
+    if ($ghOk) {
         # The release step needs a token that may write. New repositories
         # default to read-only workflow permissions, and the release step then
         # fails with a 403 -- a confusing red X on the first run.
-        & gh api -X PUT "repos/$User/$Repo/actions/permissions/workflow" `
-            -f default_workflow_permissions=write -f can_approve_pull_request_reviews=false 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $perm = Invoke-Native 'gh' 'api' '-X' 'PUT' "repos/$User/$Repo/actions/permissions/workflow" `
+            '-f' 'default_workflow_permissions=write' '-f' 'can_approve_pull_request_reviews=false'
+        if ($perm.Code -eq 0) {
             Write-Ok "workflow token set to read/write"
         } else {
             Write-Warn2 "could not set it automatically. If the release step fails with 403:"

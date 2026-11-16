@@ -17,7 +17,10 @@ name: Windows installer
 on:
   push:
     branches: [master, main]
-  pull_request:
+  # No `pull_request` trigger on purpose. Dependabot opens ~10 PRs at once on
+  # a fresh fork, and each one used to start a 25-minute Windows build; ten of
+  # those in parallel is how a free Actions quota disappears and how the run
+  # list fills with red Xs. Re-add it if you start reviewing PRs.
   workflow_dispatch:
     inputs:
       slim:
@@ -79,16 +82,54 @@ jobs:
           npx tsc --noEmit
           npx vitest run
 
+      # Compiling and bundling are separate steps on purpose. The bundler
+      # downloads NSIS and packs an installer on top of an already-built exe,
+      # and that is the part most likely to fail for reasons that have nothing
+      # to do with the code. Splitting them means a red X points at the real
+      # culprit, and a bundler failure still leaves a runnable exe behind.
       - name: Build the installer
+        id: installer
+        continue-on-error: true
         shell: pwsh
         run: |
+          # The NSIS bundler downloads nsis-3.13.zip and nsis_tauri_utils.dll
+          # from GitHub's release CDN while packing the installer, and that CDN
+          # answers 504 often enough to be worth retrying: "failed to bundle
+          # project: `http status: 504`" after a 25-minute successful compile is
+          # the most annoying failure this workflow has. Retrying costs seconds
+          # because the Rust build is already cached and incremental.
+          $script = if ("${{ inputs.slim }}" -eq "true") { "dist:slim" } else { "dist" }
+          $attempts = 3
+          for ($i = 1; $i -le $attempts; $i++) {
+            Write-Host "::group::npm run $script (attempt $i of $attempts)"
+            npm run $script
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -eq 0) { Write-Host "bundled on attempt $i"; exit 0 }
+            if ($i -lt $attempts) {
+              Write-Host "::warning::attempt $i failed (exit $code); retrying in 30s"
+              Start-Sleep -Seconds 30
+            }
+          }
+          Write-Host "::error::bundling failed $attempts times; the compile itself may still be fine, see the next step"
+          exit 1
+
+      - name: Build the portable exe
+        # Only when bundling did not already produce one. `tauri build
+        # --no-bundle` stops after compiling and linking: no NSIS download, no
+        # installer packing, nothing that can fail outside the Rust build.
+        if: steps.installer.outcome != 'success'
+        shell: pwsh
+        run: |
+          $env:RUST_BACKTRACE = "1"
           if ("${{ inputs.slim }}" -eq "true") {
-            npm run dist:slim
+            npm run dist:slim:dir
           } else {
-            npm run dist
+            npm run dist:dir
           }
 
       - name: Collect build outputs
+        if: always()
         shell: pwsh
         run: |
           $nsis = "src-tauri/target/release/bundle/nsis"
@@ -97,21 +138,41 @@ jobs:
           if (Test-Path $nsis) {
             Copy-Item "$nsis/*.exe" $out -Force
           }
-          $portable = "src-tauri/target/release/kadr.exe"
-          if (Test-Path $portable) {
+          # The exe is named after the Cargo package (`kensaku`), not after
+          # productName in tauri.conf.json -- which is why this looks for both.
+          # Missing it silently used to leave the artifact without a portable
+          # build at all.
+          $portable = @("kadr.exe", "kensaku.exe", "Kadr.exe") |
+            ForEach-Object { "src-tauri/target/release/$_" } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if ($portable) {
             Copy-Item $portable "$out/kadr-portable.exe" -Force
+            Write-Host "portable exe: $portable"
+          } else {
+            Write-Host "::warning::no portable exe found in src-tauri/target/release"
           }
           Get-ChildItem $out | ForEach-Object {
             "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB)
           }
 
       - name: Upload artifacts
+        # Also on failure: the portable exe is worth having even when the
+        # installer step went red, and a finished upload is easier to find than
+        # a log line.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kadr-windows-${{ github.sha }}-${{ inputs.slim && 'slim' || 'full' }}
           path: dist-out/*
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
+
+      - name: Warn about a missing installer
+        if: steps.installer.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Write-Host "::warning::The NSIS installer was not built (see the 'Build the installer' step above). The artifact still contains kadr-portable.exe, which runs without installing anything."
 
       - name: Attach to the release
         # Only for tags / published releases, so every push does not create a
