@@ -5,8 +5,8 @@ use crate::indexer::content::{
 use crate::indexer::extract::image as image_util;
 use crate::indexer::metadata::MetadataStore;
 use crate::indexer::walker::{
-    FileEntry, file_identity, is_cloud_placeholder, is_cloud_placeholder_path, prunes_for_roots,
-    starts_with_any, walk_directories,
+    FileEntry, collect_dir_prunes, file_identity, is_cloud_placeholder, is_cloud_placeholder_path,
+    prunes_for_roots, starts_with_any, walk_directories_pruned,
 };
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -430,7 +430,12 @@ fn rescan_watched_dirs(
     metadata: &Arc<RwLock<MetadataStore>>,
     content_index: &Arc<RwLock<Option<ContentIndex>>>,
 ) -> usize {
-    let entries = walk_directories(watched_dirs, &cfg.excluded_dirs, cfg.include_ignored);
+    let entries = walk_directories_pruned(
+        watched_dirs,
+        &cfg.excluded_dirs,
+        cfg.include_ignored,
+        &collect_dir_prunes(watched_dirs, cfg.collect_dir.as_ref()),
+    );
     let seen: HashSet<PathBuf> = entries.iter().map(|entry| entry.path.clone()).collect();
 
     let mut changed = 0;
@@ -492,6 +497,12 @@ fn is_path_excluded(path: &Path, cfg: &KensakuConfig) -> bool {
     // re-indexed through these very events. Pruned by path, matching the
     // crawler's `runtime_dir_prunes`.
     if starts_with_any(path, &prunes_for_roots(&cfg.watched_dirs)) {
+        return true;
+    }
+    // The collection folder: files are *moved* there, so an event about one of
+    // them is a move, not a new file to index. Without this the collected copy
+    // reappears in the results seconds after Ctrl+D.
+    if starts_with_any(path, &collect_dir_prunes(&cfg.watched_dirs, cfg.collect_dir.as_ref())) {
         return true;
     }
     // Honour the ignore files the crawler used, so the watcher and the crawl
@@ -660,16 +671,18 @@ fn handle_directory_rename(
     let new_dir = new_path.to_path_buf();
     let excluded_dirs = cfg.excluded_dirs.clone();
     let include_ignored = cfg.include_ignored;
+    let collect_prunes = collect_dir_prunes(&cfg.watched_dirs, cfg.collect_dir.as_ref());
     let metadata = Arc::clone(metadata);
     let content_index = Arc::clone(content_index);
 
     // A large directory move can take a while; re-index it off the watcher
     // thread so event draining is not blocked.
     thread::spawn(move || {
-        let entries = walk_directories(
+        let entries = walk_directories_pruned(
             std::slice::from_ref(&new_dir),
             &excluded_dirs,
             include_ignored,
+            &collect_prunes,
         );
         let mut pending_commits = 0usize;
 

@@ -16,7 +16,7 @@ use crate::indexer::content::{
     ContentIndex, is_indexable_extension, is_indexable_file_name, read_text_content_checked,
 };
 use crate::indexer::metadata::MetadataStore;
-use crate::indexer::walker::{FileEntry, is_cloud_placeholder_path, walk_directories};
+use crate::indexer::walker::{FileEntry, is_cloud_placeholder_path};
 use crate::indexer::watcher::{WatcherHandle, start_file_watcher};
 use crate::search::{SearchDispatcher, SearchResponse, SortOrder};
 use parking_lot::{Mutex, RwLock};
@@ -670,6 +670,15 @@ impl IndexerManager {
                     cfg.include_ignored,
                 )
             };
+            // The collect hotkey *moves* files into the collection folder, so
+            // crawling it would list every collected file twice: once at the
+            // old path (until the move is reconciled) and again at the new one.
+            // Pruned by path, not by name, so an unrelated folder that happens
+            // to share the name stays searchable.
+            let collect_prunes = {
+                let cfg = config_arc.read();
+                crate::indexer::walker::collect_dir_prunes(&cfg.watched_dirs, cfg.collect_dir.as_ref())
+            };
 
             // Balanced/eco keep the crawl thread in the OS idle class; full
             // leaves it at normal priority. Failures are advisory.
@@ -721,7 +730,12 @@ impl IndexerManager {
             }
 
             // Phase 1: Collect all entries (jwalk is already parallel internally).
-            let all_entries = walk_directories(&watched_dirs, &excluded_dirs, include_ignored);
+            let all_entries = crate::indexer::walker::walk_directories_pruned(
+                &watched_dirs,
+                &excluded_dirs,
+                include_ignored,
+                &collect_prunes,
+            );
             let total_entries = all_entries.len();
             {
                 let mut st = status.write();

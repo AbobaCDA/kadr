@@ -5,6 +5,13 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.17
+- Version bumped so an installed build is identifiable: two rounds of fixes
+  were otherwise indistinguishable from each other and from the first build,
+  which is exactly how a stale artifact got installed and looked like a bug.
+- Includes the collection-folder exclusion from the index (see below), which
+  was written but never reached the repository.
+
 ### Added (Kadr fork)
 - **The OCR step of the first-run wizard can be skipped.** Photos and videos
   are indexed by name, path and metadata without OCR -- only text *inside* a

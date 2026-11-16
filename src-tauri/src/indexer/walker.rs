@@ -160,6 +160,27 @@ pub fn system_data_dirs() -> Vec<PathBuf> {
     }
 }
 
+/// The user's collection folder, when it must be pruned.
+///
+/// The collect hotkey *moves* a file into this folder. Indexing it would list
+/// every collected file a second time under its new name, which looks exactly
+/// like a duplicate in the results; the folder would also grow without bound
+/// inside the index. So the whole subtree is skipped, by path rather than by
+/// name: two folders called "Photos" must not both disappear because one of
+/// them is the collection.
+///
+/// A collection folder that *is* a crawl root yields nothing: pruning it would
+/// make the crawl return zero files, and the user asked for it explicitly.
+pub fn collect_dir_prunes(roots: &[PathBuf], collect_dir: Option<&PathBuf>) -> Vec<PathBuf> {
+    let Some(dir) = collect_dir else {
+        return Vec::new();
+    };
+    if roots.iter().any(|root| root == dir) {
+        return Vec::new();
+    }
+    vec![dir.clone()]
+}
+
 /// Everything a walk or watch over `roots` must not enter: Kadr's own
 /// data always, plus the OS data trees, except one that a root lives inside.
 /// Someone who adds iCloud Drive (`~/Library/Mobile Documents/...`) on
@@ -225,6 +246,19 @@ pub fn walk_directories(
     excluded_dirs: &[String],
     include_ignored: bool,
 ) -> Vec<FileEntry> {
+    walk_directories_pruned(dirs, excluded_dirs, include_ignored, &[])
+}
+
+/// [`walk_directories`] plus extra path-based prunes (the collection folder,
+/// see [`collect_dir_prunes`]). Kept as a separate entry point so the dozens of
+/// call sites that have nothing extra to prune do not thread an empty slice
+/// through.
+pub fn walk_directories_pruned(
+    dirs: &[PathBuf],
+    excluded_dirs: &[String],
+    include_ignored: bool,
+    extra_prunes: &[PathBuf],
+) -> Vec<FileEntry> {
     let mut result = Vec::new();
     let mut ignore_dirs: Vec<PathBuf> = Vec::new();
     let excluded_set: HashSet<String> = excluded_dirs.iter().map(|s| s.to_lowercase()).collect();
@@ -263,7 +297,8 @@ pub fn walk_directories(
             .process_read_dir({
                 let excluded_set = excluded_set.clone();
                 let sensitive_set = sensitive_set.clone();
-                let prune_roots = prunes_for_roots(dirs);
+                let mut prune_roots = prunes_for_roots(dirs);
+                prune_roots.extend_from_slice(extra_prunes);
                 move |_depth, _path, _read_dir_state, children| {
                     children.retain(|dir_entry_result| {
                         if let Ok(entry) = dir_entry_result {
@@ -415,6 +450,73 @@ mod tests {
             vec![library.clone()],
         );
         assert!(!starts_with_any(&icloud.join("notes.txt"), &prunes));
+    }
+
+    #[test]
+    fn collect_dir_is_pruned_by_path_not_by_name() {
+        let root = PathBuf::from("/data");
+        let collect = root.join("Photos/Collection");
+
+        // Not set: nothing extra to prune.
+        assert!(collect_dir_prunes(&[root.clone()], None).is_empty());
+
+        // Set: the folder and everything below it are pruned.
+        let prunes = collect_dir_prunes(&[root.clone()], Some(&collect));
+        assert_eq!(prunes, vec![collect.clone()]);
+        assert!(starts_with_any(&collect.join("2024/a.jpg"), &prunes));
+        assert!(starts_with_any(&collect, &prunes));
+
+        // A sibling that merely shares the name, and the parent folder, stay
+        // searchable: the prune is a path prefix, never a name match.
+        assert!(!starts_with_any(&root.join("Photos/Other/a.jpg"), &prunes));
+        assert!(!starts_with_any(&root.join("Photos/a.jpg"), &prunes));
+        assert!(!starts_with_any(&root.join("Photos/Collection 2/a.jpg"), &prunes));
+
+        // Path prefixes are compared by component: `/data/PhotosX` is not
+        // inside `/data/Photos`.
+        assert!(!starts_with_any(&PathBuf::from("/data/PhotosX/a.jpg"), &prunes));
+    }
+
+    #[test]
+    fn collect_dir_that_is_itself_a_root_is_not_pruned() {
+        // Pruning the only root would index nothing at all, which is never what
+        // the user meant by picking it.
+        let root = PathBuf::from("/data/Photos");
+        assert!(collect_dir_prunes(std::slice::from_ref(&root), Some(&root)).is_empty());
+    }
+
+    #[test]
+    fn walk_skips_the_collection_folder() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "kadr-collect-prune-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        let keep = base.join("inbox");
+        let collect = base.join("collection");
+        std::fs::create_dir_all(&keep).unwrap();
+        std::fs::create_dir_all(collect.join("nested")).unwrap();
+        std::fs::write(keep.join("kept.png"), b"x").unwrap();
+        std::fs::write(collect.join("moved.png"), b"x").unwrap();
+        std::fs::write(collect.join("nested/also-moved.png"), b"x").unwrap();
+
+        let all = walk_directories(std::slice::from_ref(&base), &[], false);
+        assert!(all.iter().any(|entry| entry.name == "moved.png"));
+
+        let prunes = collect_dir_prunes(std::slice::from_ref(&base), Some(&collect));
+        let filtered = walk_directories_pruned(std::slice::from_ref(&base), &[], false, &prunes);
+        assert!(filtered.iter().any(|entry| entry.name == "kept.png"));
+        assert!(
+            !filtered.iter().any(|entry| entry.name == "moved.png"),
+            "the collect folder must not be crawled"
+        );
+        assert!(!filtered.iter().any(|entry| entry.name == "also-moved.png"));
+
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
