@@ -98,13 +98,22 @@ pub fn select_platform_asset(assets: &[ReleaseAsset]) -> Option<ReleaseAsset> {
                     return Some(a.clone());
                 }
             }
+            // Exact names first: the Windows workflow publishes these two on
+            // the `latest` release, and matching them by stem avoids picking
+            // `kadr-portable.exe` (a bare exe that would install nothing).
+            if let Some(a) = assets.iter().find(|a| a.name.eq_ignore_ascii_case("kadr-setup.exe")) {
+                return Some(a.clone());
+            }
             if let Some(a) = assets.iter().find(|a| a.name.ends_with("-setup.exe")) {
                 return Some(a.clone());
             }
             if let Some(a) = assets.iter().find(|a| a.name.ends_with(".msi")) {
                 return Some(a.clone());
             }
-            if let Some(a) = assets.iter().find(|a| a.name.ends_with(".exe")) {
+            if let Some(a) = assets
+                .iter()
+                .find(|a| a.name.ends_with(".exe") && !a.name.contains("portable"))
+            {
                 return Some(a.clone());
             }
         }
@@ -156,10 +165,20 @@ const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600
 /// metadata check. `None` when the release does not publish one.
 static SUMS_URL: Mutex<Option<String>> = Mutex::new(None);
 
+/// Release feed probed by [`check_for_update`].
+///
+/// A fork must point at its *own* releases: the inherited value was
+/// `yjid/kensaku`, so "download and install the update" would have fetched the
+/// upstream installer and replaced this build with someone else's application.
+/// `latest` is the prerelease tag the Windows workflow republishes on every
+/// successful build (see `.github/workflows/windows-installer.yml`), which is
+/// what makes an in-app update path exist at all.
+const RELEASE_API: &str = "https://api.github.com/repos/AbobaCDA/kadr/releases/latest";
+
 /// Checks GitHub for the latest release metadata.
 pub fn check_for_update() -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION");
-    let url = "https://api.github.com/repos/yjid/kensaku/releases/latest";
+    let url = RELEASE_API;
 
     let resp: GitHubRelease = ureq::get(url)
         .set("User-Agent", &format!("kensaku-updater/{}", current_version))
@@ -322,11 +341,32 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
         .name("kensaku-updater".to_string())
         .spawn(move || {
             let res = (|| -> Result<(), String> {
-                let resp = ureq::get(&url)
-                    .set("User-Agent", &format!("kensaku-updater/{}", env!("CARGO_PKG_VERSION")))
-                    .timeout(DOWNLOAD_TIMEOUT)
-                    .call()
-                    .map_err(|e| format!("Download request failed: {e}"))?;
+                // Retries. A release asset is served from a CDN, and that CDN
+                // answered 504 often enough to kill the workflow's own bundling
+                // step -- a 20 MB download that dies at 90% should not have to
+                // be restarted by hand. Each attempt truncates the `.part` file
+                // it writes, so a retry never appends to a broken prefix.
+                let mut last_error = String::new();
+                let mut resp_opt = None;
+                for attempt in 1..=3u32 {
+                    match ureq::get(&url)
+                        .set("User-Agent", &format!("kensaku-updater/{}", env!("CARGO_PKG_VERSION")))
+                        .timeout(DOWNLOAD_TIMEOUT)
+                        .call()
+                    {
+                        Ok(resp) => {
+                            resp_opt = Some(resp);
+                            break;
+                        }
+                        Err(e) => {
+                            last_error = format!("Download request failed: {e}");
+                            if attempt < 3 {
+                                std::thread::sleep(std::time::Duration::from_secs(2));
+                            }
+                        }
+                    }
+                }
+                let resp = resp_opt.ok_or(last_error)?;
 
                 let total_bytes: u64 = resp
                     .header("Content-Length")
@@ -506,6 +546,47 @@ mod tests {
         assert!(!is_newer_version("v1.0.13", "1.0.13"));
         assert!(!is_newer_version("1.0.12", "1.0.13"));
         assert!(!is_newer_version("0.9.9", "1.0.13"));
+    }
+
+    #[test]
+    #[test]
+    fn stable_release_names_win_over_versioned_and_portable_assets() {
+        // What the `latest` release actually publishes: two fixed names plus a
+        // checksum file. Picking `kadr-portable.exe` here would download a bare
+        // exe that installs nothing, and picking a versioned setup file would
+        // keep working only by accident.
+        let assets = vec![
+            ReleaseAsset {
+                name: "kadr-portable.exe".to_string(),
+                browser_download_url: "http://example.com/p.exe".to_string(),
+                size: 10,
+            },
+            ReleaseAsset {
+                name: "SHA256SUMS".to_string(),
+                browser_download_url: "http://example.com/sums".to_string(),
+                size: 1,
+            },
+            ReleaseAsset {
+                name: "kadr-setup.exe".to_string(),
+                browser_download_url: "http://example.com/s.exe".to_string(),
+                size: 20,
+            },
+        ];
+        if cfg!(windows) {
+            let selected = select_platform_asset(&assets).unwrap();
+            assert_eq!(selected.name, "kadr-setup.exe");
+        }
+
+        // With only a portable build present, never hand the installer path a
+        // portable exe: `None` is the honest answer, and the UI says so.
+        let portable_only = vec![ReleaseAsset {
+            name: "kadr-portable.exe".to_string(),
+            browser_download_url: "http://example.com/p.exe".to_string(),
+            size: 10,
+        }];
+        if cfg!(windows) {
+            assert!(select_platform_asset(&portable_only).is_none());
+        }
     }
 
     #[test]

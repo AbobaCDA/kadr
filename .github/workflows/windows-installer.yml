@@ -4,10 +4,14 @@ name: Windows installer
 # Visual Studio or Node on their own machine.
 #
 # Where to get the exe:
-#   * Actions → "Windows installer" → Run workflow → the run's Artifacts
-#     section has a zip containing the installer and the portable exe.
-#   * Push a tag (`git tag v1.0.17 && git push --tags`) and the same build is
-#     attached to a GitHub Release, so the download link is stable.
+#   * Every successful build republishes the release tagged `latest`, with two
+#     fixed file names. No GitHub account, no `gh`, no expiry:
+#       https://github.com/<owner>/<repo>/releases/download/latest/kadr-setup.exe
+#       https://github.com/<owner>/<repo>/releases/download/latest/kadr-portable.exe
+#   * Actions → "Windows installer" → the run's Artifacts also holds a zip
+#     named after the commit, for when you want that exact build.
+#   * Push a tag (`git tag v1.0.17 && git push --tags`) and the same files are
+#     attached to a versioned Release as well.
 #
 # Deliberately not inherited from upstream: their release workflow signs
 # updater artifacts and needs TAURI_SIGNING_PRIVATE_KEY in repository secrets.
@@ -27,8 +31,9 @@ on:
         description: "Slim build (no PP-OCR/ONNX): ~7 MB installer instead of ~9 MB"
         type: boolean
         default: false
-  release:
-    types: [published]
+  # No `release: published` trigger: the build itself publishes the `latest`
+  # release below, and a release event firing on that release would start the
+  # workflow again, forever. Tag pushes are covered by `push`.
 
 permissions:
   contents: write
@@ -136,7 +141,11 @@ jobs:
           $out = "dist-out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           if (Test-Path $nsis) {
-            Copy-Item "$nsis/*.exe" $out -Force
+            # Fixed name on purpose: the release asset URL must not change
+            # between builds, or a link in a readme (or in a script) goes stale
+            # every time the version is bumped.
+            $setup = Get-ChildItem "$nsis/*.exe" | Select-Object -First 1
+            if ($setup) { Copy-Item $setup.FullName "$out/kadr-setup.exe" -Force }
           }
           # The exe is named after the Cargo package (`kensaku`), not after
           # productName in tauri.conf.json -- which is why this looks for both.
@@ -151,6 +160,17 @@ jobs:
             Write-Host "portable exe: $portable"
           } else {
             Write-Host "::warning::no portable exe found in src-tauri/target/release"
+          }
+          # Checksums. The updater verifies a download against `SHA256SUMS`
+          # when the release publishes one; without it the check silently
+          # degrades to "no checksum, trust the bytes".
+          $lines = @()
+          Get-ChildItem $out -Filter *.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            $lines += ("{0}  {1}" -f $hash, $_.Name)
+          }
+          if ($lines.Count -gt 0) {
+            Set-Content -Path "$out/SHA256SUMS" -Value $lines -Encoding ascii
           }
           Get-ChildItem $out | ForEach-Object {
             "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB)
@@ -174,10 +194,36 @@ jobs:
         run: |
           Write-Host "::warning::The NSIS installer was not built (see the 'Build the installer' step above). The artifact still contains kadr-portable.exe, which runs without installing anything."
 
-      - name: Attach to the release
-        # Only for tags / published releases, so every push does not create a
-        # release. The tag is the version marker.
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+      - name: Publish the latest build
+        # The download path people actually use. Fixed asset names mean the URL
+        # never changes, and a release asset needs no login to fetch -- unlike
+        # Actions artifacts, which require an authenticated API call (that is
+        # why "download the artifact" needed `gh` and a token).
+        if: github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: |
+            Built from commit ${{ github.sha }}.
+
+            * `kadr-setup.exe` — installer
+            * `kadr-portable.exe` — no installation needed
+
+            The app itself reports its version under Settings → About.
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: false
+          files: |
+            dist-out/kadr-setup.exe
+            dist-out/kadr-portable.exe
+            dist-out/SHA256SUMS
+
+      - name: Attach to the versioned release
+        # Tags stay the version marker: `git tag v1.0.17 && git push --tags`
+        # produces a normal (non-prerelease) Release with the same files.
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist-out/*

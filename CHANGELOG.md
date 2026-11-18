@@ -6,6 +6,46 @@ versioning: [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### 1.0.17
+- **In-app update points at this fork.** The update check probed
+  `api.github.com/repos/yjid/kensaku/releases/latest`, so "Download & Install
+  Update" would have fetched *upstream's* installer and replaced Kadr with
+  someone else's application. It now reads this fork's `latest` release -- the
+  one every successful Windows build republishes -- prefers the fixed
+  `kadr-setup.exe` asset, and refuses to hand a `kadr-portable.exe` to the
+  installer path (a portable build cannot update itself in place, and says so).
+- The update download retries three times: the release CDN answered 504 often
+  enough to kill the workflow's own bundling step, and a manual restart of a
+  20 MB download is not something to ask a user to do.
+- The Windows workflow publishes `SHA256SUMS` next to the installers, so the
+  updater's existing checksum verification is actually active instead of
+  silently skipped.
+
+- **Searches stop taking 30-40 seconds on a large index.** A filtered query
+  (`type:image`, a scope, any filter) built a candidate set of *nodes* and then
+  scanned every *unit* vector to discard the ones outside it: on a 1.6M-unit
+  index that is a full scan per keystroke, for results thrown away afterwards.
+  The scan now walks the candidate set through the store's `node_to_units` map
+  when it covers less than 30% of the corpus, and falls back to the full scan
+  otherwise. Semantics are unchanged -- a test asserts the filtered result is
+  identical to scoring everything and filtering after.
+- Semantic hits with equal scores were ordered by `HashMap` iteration, so the
+  same query could return the same rows in a different order between runs,
+  which makes paging skip or repeat. Ties now break on node id.
+- **The status strip stops saying "building the semantic index" forever.** When
+  the embedding queue drained it copied the current phase back into itself, so
+  "embedding" was never cleared while the crawl still reported itself busy.
+- The preemption and idle sleeps of the embedding worker are interruptible:
+  `stop()` joins that thread before the crawl writes, so a nap there became a
+  visible stall on every index start.
+
+- **The exe is downloadable without `gh` and without an account.** Artifacts
+  need an authenticated API call, so "download the artifact" only worked for
+  someone with the GitHub CLI installed. Every successful build now republishes
+  a `latest` prerelease with two fixed asset names:
+  `releases/download/latest/kadr-setup.exe` and `.../kadr-portable.exe`. The
+  `release: published` trigger is gone with it: the build publishes a release,
+  and that event would otherwise start the build again, forever.
+
 - Version bumped so an installed build is identifiable: two rounds of fixes
   were otherwise indistinguishable from each other and from the first build,
   which is exactly how a stale artifact got installed and looked like a bug.
