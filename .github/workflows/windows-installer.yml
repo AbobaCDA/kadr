@@ -181,7 +181,7 @@ jobs:
         # installer step went red, and a finished upload is easier to find than
         # a log line.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kadr-windows-${{ github.sha }}-${{ inputs.slim && 'slim' || 'full' }}
           path: dist-out/*
