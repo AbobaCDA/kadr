@@ -170,23 +170,42 @@ static SUMS_URL: Mutex<Option<String>> = Mutex::new(None);
 /// A fork must point at its *own* releases: the inherited value was
 /// `yjid/kensaku`, so "download and install the update" would have fetched the
 /// upstream installer and replaced this build with someone else's application.
-/// `latest` is the prerelease tag the Windows workflow republishes on every
-/// successful build (see `.github/workflows/windows-installer.yml`), which is
-/// what makes an in-app update path exist at all.
-const RELEASE_API: &str = "https://api.github.com/repos/AbobaCDA/kadr/releases/latest";
+///
+/// The tag is `latest`, a **prerelease** the Windows workflow republishes on
+/// every successful build (see `.github/workflows/windows-installer.yml`).
+/// `/releases/latest` is the wrong endpoint for it: GitHub's "latest" means
+/// "latest non-prerelease", and it answered `404 Not Found` -- so the in-app
+/// update check could never see a build at all. The list endpoint has to be
+/// used instead, and it is published in creation order.
+const RELEASE_LIST_API: &str = "https://api.github.com/repos/AbobaCDA/kadr/releases?per_page=10";
+
+/// Picks the release an update should come from.
+///
+/// Prefers the rolling `latest` tag, whatever GitHub thinks of its prerelease
+/// flag; falls back to the newest published release so a future switch to
+/// plain version tags keeps working. The list arrives newest first.
+fn select_release(releases: &[GitHubRelease]) -> Option<GitHubRelease> {
+    releases
+        .iter()
+        .find(|release| release.tag_name.trim_start_matches('v').eq_ignore_ascii_case("latest"))
+        .or_else(|| releases.first())
+        .cloned()
+}
 
 /// Checks GitHub for the latest release metadata.
 pub fn check_for_update() -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION");
-    let url = RELEASE_API;
 
-    let resp: GitHubRelease = ureq::get(url)
+    let releases: Vec<GitHubRelease> = ureq::get(RELEASE_LIST_API)
         .set("User-Agent", &format!("kensaku-updater/{}", current_version))
         .timeout(METADATA_TIMEOUT)
         .call()
         .map_err(|e| format!("Failed to reach GitHub release API: {e}"))?
         .into_json()
         .map_err(|e| format!("Failed to parse release information: {e}"))?;
+
+    let resp = select_release(&releases)
+        .ok_or_else(|| "This repository has published no releases yet".to_string())?;
 
     if let Ok(mut slot) = SUMS_URL.lock() {
         *slot = resp
@@ -546,6 +565,29 @@ mod tests {
         assert!(!is_newer_version("v1.0.13", "1.0.13"));
         assert!(!is_newer_version("1.0.12", "1.0.13"));
         assert!(!is_newer_version("0.9.9", "1.0.13"));
+    }
+
+    #[test]
+    fn the_rolling_latest_tag_is_found_even_though_it_is_a_prerelease() {
+        // The real payload: one prerelease tagged `latest`, and older versioned
+        // releases. `/releases/latest` skips prereleases and returned 404, so
+        // every in-app update check failed with "no releases".
+        let payload = r#"[
+            {"tag_name": "v1.0.17", "html_url": "u", "name": "1.0.17", "body": "", "assets": []},
+            {"tag_name": "latest", "html_url": "u", "name": "rolling", "body": "", "assets": []}
+        ]"#;
+        let releases: Vec<GitHubRelease> = serde_json::from_str(payload).expect("payload");
+        let picked = select_release(&releases).expect("a release");
+        assert_eq!(picked.tag_name, "latest");
+
+        // With no rolling tag at all, the newest release is used.
+        let versioned: Vec<GitHubRelease> =
+            serde_json::from_str(r#"[{"tag_name": "v2.0.0", "html_url": "u", "assets": []}]"#)
+                .expect("payload");
+        assert_eq!(
+            select_release(&versioned).map(|r| r.tag_name),
+            Some("v2.0.0".to_string())
+        );
     }
 
     #[test]
