@@ -549,7 +549,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn stable_release_names_win_over_versioned_and_portable_assets() {
         // What the `latest` release actually publishes: two fixed names plus a
         // checksum file. Picking `kadr-portable.exe` here would download a bare

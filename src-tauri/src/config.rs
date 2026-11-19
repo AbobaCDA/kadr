@@ -135,7 +135,14 @@ pub struct KensakuConfig {
     /// default; read-only tools are always available.
     #[serde(default)]
     pub mcp_allow_reindex: bool,
-    #[serde(default = "default_true")]
+    /// Read text out of images and scanned PDFs.
+    ///
+    /// Off by default, and never switched back on by itself. OCR is the single
+    /// most expensive part of an index (a CPU-heavy pass over every image on
+    /// the disk), so it exists as an explicit choice, not as a surprise during
+    /// the first crawl. `default_false` also migrates older configs, where the
+    /// flag was missing and silently meant "on".
+    #[serde(default)]
     pub ocr_enabled: bool,
     /// How the app presents itself: `launcher` (hide on blur/Esc, tray only,
     /// tiny footprint) or `app` (stays open, appears in the dock/taskbar).
@@ -373,7 +380,7 @@ pub fn normalize_language(raw: &str) -> Option<String> {
 }
 
 /// Version written by this build; see `parse_and_migrate`.
-pub const CURRENT_CONFIG_VERSION: u32 = 7;
+pub const CURRENT_CONFIG_VERSION: u32 = 8;
 
 /// Extensions skipped entirely (not even indexed by name).
 const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &[
@@ -499,7 +506,7 @@ impl Default for KensakuConfig {
             agent_scoped_roots: Vec::new(),
             include_ignored: false,
             extractors: Vec::new(),
-            ocr_enabled: true,
+            ocr_enabled: false,
             ocr_max_image_bytes: 0,
             ocr_languages: Vec::new(),
             ocr_engine: default_ocr_engine(),
@@ -663,6 +670,19 @@ impl KensakuConfig {
             // codes fall back to auto-detect (None).
             cfg.language = cfg.language.as_deref().and_then(normalize_language);
             cfg.config_version = 7;
+            migrated = true;
+        }
+
+        if cfg.config_version < 8 {
+            // v8: OCR stops being opt-out.
+            //
+            // The field used to default to true, so a config written without an
+            // explicit choice -- which includes every config from before the
+            // flag existed -- meant "run OCR on everything". Turning it off
+            // here is the only way to honour the user's decision: they skipped
+            // the OCR step, and the app kept scanning images anyway.
+            cfg.ocr_enabled = false;
+            cfg.config_version = 8;
             migrated = true;
         }
 
@@ -860,7 +880,7 @@ mod tests {
         assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
         assert!(cfg.skip_hidden);
         assert!(cfg.auto_update);
-        assert!(cfg.ocr_enabled);
+        assert!(!cfg.ocr_enabled, "OCR must stay opt-in");
         assert_eq!(cfg.theme, "dark");
     }
 
@@ -1068,8 +1088,21 @@ mod tests {
         assert!(!cfg.excluded_extensions.iter().any(|e| e == "zip"));
         // Missing defaults are filled in by serde.
         assert!(cfg.skip_hidden);
-        assert!(cfg.ocr_enabled);
+        assert!(!cfg.ocr_enabled, "OCR must stay opt-in");
         assert_eq!(cfg.theme, "dark");
+    }
+
+    #[test]
+    fn migration_turns_ocr_off_for_configs_that_never_asked() {
+        // A pre-v8 config has no `ocr_enabled` key at all, and the old serde
+        // default said "on". That is how a user who skipped the OCR step still
+        // got every image on the disk re-scanned.
+        let old = r#"{ "config_version": 7, "watched_dirs": ["C:/Users/me"] }"#;
+        let cfg = KensakuConfig::load_from_str(old);
+        assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
+        assert!(!cfg.ocr_enabled);
+        // Everything the user did set survives.
+        assert_eq!(cfg.watched_dirs.len(), 1);
     }
 
     #[test]

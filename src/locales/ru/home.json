@@ -10,5 +10,11 @@
     "screenshots": "скриншоты за прошлую неделю",
     "videos": "большие видео",
     "invoice": "счёт на оплату"
-  }
+  },
+  "typeImages": "Фото",
+  "typeVideo": "Видео",
+  "typeDocs": "Документы",
+  "typeCode": "Код",
+  "typeArchives": "Архивы",
+  "typeFolders": "Папки"
 }

@@ -10,5 +10,11 @@
     "screenshots": "screenshots from last week",
     "videos": "big videos",
     "invoice": "invoice"
-  }
+  },
+  "typeImages": "Photos",
+  "typeVideo": "Video",
+  "typeDocs": "Documents",
+  "typeCode": "Code",
+  "typeArchives": "Archives",
+  "typeFolders": "Folders"
 }

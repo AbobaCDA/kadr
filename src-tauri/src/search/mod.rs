@@ -961,7 +961,26 @@ impl SearchDispatcher {
         }
 
         // Deterministic natural-language pass. Explicit grammar is left alone.
-        let intent = crate::query::intent::compile_with_aliases(raw_query, aliases);
+        // A bare type word ("image", "photos", "видео") means a type filter,
+        // not a search for that word in file names.
+        let (query_for_intent, bare_filter) =
+            crate::query::intent::apply_bare_type_word(raw_query);
+        let mut intent = crate::query::intent::compile_with_aliases(&query_for_intent, aliases);
+        if let Some(filter) = bare_filter {
+            // The rewritten query already contains the filter token; only the
+            // explanation chip is missing.
+            let _ = &intent.query;
+            // Say what happened: the user typed a word and got a filter, and an
+            // unexplained chip on the next search would be worse than none.
+            if !intent.chips.iter().any(|chip| chip.raw == filter) {
+                intent.chips.push(crate::query::intent::InterpretationChip {
+                    kind: "type".to_string(),
+                    label: format!("Type: {}", filter.trim_start_matches("type:")),
+                    raw: filter.to_string(),
+                    source: query_for_intent.trim().to_string(),
+                });
+            }
+        }
         let effective_query = intent.query.as_str();
         let sort = if sort == SortOrder::Best {
             intent

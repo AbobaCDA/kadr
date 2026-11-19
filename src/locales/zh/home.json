@@ -10,5 +10,11 @@
     "screenshots": "上周的截图",
     "videos": "大视频",
     "invoice": "发票"
-  }
+  },
+  "typeImages": "照片",
+  "typeVideo": "视频",
+  "typeDocs": "文档",
+  "typeCode": "代码",
+  "typeArchives": "压缩包",
+  "typeFolders": "文件夹"
 }

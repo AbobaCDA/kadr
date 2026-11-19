@@ -64,6 +64,39 @@ function RecentTile({
   );
 }
 
+/** File-type entry points, always visible on the home screen.
+ *
+ * The type filter existed only as query grammar (`type:image`), so a user who
+ * typed the word "image" searched for that word in file names and found
+ * nothing. One click is a better first experience than a syntax lesson. */
+function TypeRow({ onSearch }: { onSearch: (query: string) => void }) {
+  const { t } = useTranslation("home");
+  // `as const` keeps the keys inside i18next's typed key union; a plain
+  // `string` fails typechecking against `t`.
+  const types = [
+    { token: "type:image", key: "typeImages" },
+    { token: "type:media", key: "typeVideo" },
+    { token: "type:doc", key: "typeDocs" },
+    { token: "type:code", key: "typeCode" },
+    { token: "type:archive", key: "typeArchives" },
+    { token: "type:folder", key: "typeFolders" },
+  ] as const;
+  return (
+    <div className="flex w-full flex-wrap gap-1.5">
+      {types.map((item) => (
+        <button
+          key={item.token}
+          type="button"
+          onClick={() => onSearch(item.token)}
+          className="btn btn-secondary h-8 !rounded-full"
+        >
+          {t(item.key)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function HomeView({
   data,
   recentQueries: propRecentQueries,
@@ -99,6 +132,7 @@ export function HomeView({
       return (
         <div className="flex flex-1 flex-col items-start justify-end gap-4 px-4 pb-8">
           <p className="t-moment rise-in max-w-md text-muted">{t("emptyHint")}</p>
+          <TypeRow onSearch={onSearch} />
           <div className="flex flex-wrap gap-1.5">
             {suggestions.map((q, i) => (
               <button

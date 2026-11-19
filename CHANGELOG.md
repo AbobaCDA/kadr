@@ -5,6 +5,24 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.18
+- **Search by type, without learning a syntax.** The type filter existed only
+  as query grammar (`type:image`), so typing the word "image" searched file
+  *names* for that word -- and on a disk with three million photos it found
+  nothing, which is exactly why "поиск по картинкам" looked broken. Bare type
+  words (`image`, `photos`, `screenshot`, `видео`, `папки`, `pdf`, ...) are now
+  understood as type filters, and the home screen has a row of buttons
+  (Фото / Видео / Документы / Код / Архивы / Папки) that run the filter in one
+  click. In a phrase the word still means what it says: "cat photos" searches
+  for `cat` among images.
+- **OCR is off unless you turn it on.** It was the single heaviest thing the
+  indexer did, and it ran by default: a CPU-heavy pass over every image on the
+  disk, including the ones the user never asked about. Skipping the setup step
+  now really skips it, an old config is migrated to "off" (new v8), and the
+  settings toggle no longer shows "on" when the config has no opinion. Nothing
+  re-enables it on its own.
+- The setup wizard's OCR default no longer contradicts the backend's.
+
 ### 1.0.17
 - **In-app update points at this fork.** The update check probed
   `api.github.com/repos/yjid/kensaku/releases/latest`, so "Download & Install

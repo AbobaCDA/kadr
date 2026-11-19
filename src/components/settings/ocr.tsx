@@ -224,7 +224,7 @@ export function OcrField({
           </p>
         </div>
         <Switch
-          checked={config.ocr_enabled ?? true}
+          checked={config.ocr_enabled ?? false}
           disabled={unavailable}
           onChange={(v) => setConfig((c) => (c ? { ...c, ocr_enabled: v } : c))}
         />

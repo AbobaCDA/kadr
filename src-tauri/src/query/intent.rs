@@ -58,12 +58,70 @@ pub fn compile(raw: &str) -> Intent {
 
 /// Compiles natural language, expanding personal vocabulary aliases into an
 /// OR-regex term (e.g. `resume` → `re:"(?i)(resume|cv)"`).
+/// True for a token that already carries filter grammar (`key:value`).
+///
+/// Bare type words (`image`, `photo`, `video`) do not count here, on purpose.
+/// `apply_bare_type_word` turns them into grammar *before* this function ever
+/// sees the query, and treating them as explicit inside the compiler meant
+/// "screenshots from last week" lost its `from last week` half: the type word
+/// switched off the natural-language pass for the whole query.
+fn is_explicit_filter_token(token: &str) -> bool {
+    token.contains(':')
+}
+
+/// Maps a bare type word to the filter it means.
+///
+/// Deliberately a closed list of very common words ("photos", "videos",
+/// "images"), because people type these expecting a file-type search.
+fn bare_type_filter(token: &str) -> Option<&'static str> {
+    let word = token.trim_matches(|c: char| !c.is_alphanumeric()).to_ascii_lowercase();
+    match word.as_str() {
+        "image" | "images" | "img" | "photo" | "photos" | "picture" | "pictures"
+        | "screenshot" | "screenshots" | "pic" | "pics" | "фото" | "фотки" | "картинки"
+        | "скриншоты" | "图片" | "照片" => Some("type:image"),
+        "video" | "videos" | "vid" | "movie" | "movies" | "видео" | "видеофайлы"
+        | "视频" => Some("type:media"),
+        "audio" | "music" | "song" | "songs" | "mp3" | "аудио" | "музыка" => {
+            Some("type:media")
+        }
+        "pdf" | "pdfs" | "пдф" => Some("ext:pdf"),
+        "doc" | "docs" | "document" | "documents" | "документы" => Some("type:doc"),
+        "archive" | "archives" | "архивы" => Some("type:archive"),
+        "folder" | "folders" | "dir" | "dirs" | "папки" | "папка" => Some("type:dir"),
+        _ => None,
+    }
+}
+
+/// Rewrites bare type words in `raw` into their filter form.
+///
+/// Returns the rewritten query and how many words were rewritten, so the caller
+/// can say what it did (an unexplained chip is worse than none).
+pub fn apply_bare_type_word(raw: &str) -> (String, Option<&'static str>) {
+    let mut replaced: Option<&'static str> = None;
+    let mut any = false;
+    let mut work = String::with_capacity(raw.len() + 8);
+    for (i, token) in raw.split_whitespace().enumerate() {
+        if i > 0 {
+            work.push(' ');
+        }
+        match bare_type_filter(token) {
+            Some(filter) => {
+                work.push_str(filter);
+                replaced = Some(filter);
+                any = true;
+            }
+            None => work.push_str(token),
+        }
+    }
+    if any { (work, replaced) } else { (raw.to_string(), None) }
+}
+
 pub fn compile_with_aliases(raw: &str, aliases: &[(String, Vec<String>)]) -> Intent {
     // Explicit grammar is authoritative: never reinterpret a query that
     // already contains a filter token.
     let has_explicit_filter = raw
         .split_whitespace()
-        .any(|t| t.contains(':') && !t.starts_with("http") && !t.starts_with("https"));
+        .any(|t| is_explicit_filter_token(t) && !t.starts_with("http") && !t.starts_with("https"));
 
     let mut work = raw.to_string();
     let mut appends: Vec<String> = Vec::new();
@@ -388,6 +446,49 @@ pub fn compile_with_aliases(raw: &str, aliases: &[(String, Vec<String>)]) -> Int
     }
 
     Intent { query, sort, chips }
+}
+
+#[cfg(test)]
+mod bare_type_tests {
+    use super::*;
+
+    #[test]
+    fn bare_words_become_type_filters() {
+        for word in ["image", "Images", "photos", "screenshot", "фото", "картинки"] {
+            assert_eq!(
+                apply_bare_type_word(word).1,
+                Some("type:image"),
+                "{word} must mean images"
+            );
+        }
+        assert_eq!(apply_bare_type_word("videos").1, Some("type:media"));
+        assert_eq!(apply_bare_type_word("pdf").1, Some("ext:pdf"));
+        assert_eq!(apply_bare_type_word("folders").1, Some("type:dir"));
+    }
+
+    #[test]
+    fn words_inside_a_phrase_are_kept_as_text() {
+        // "cat photos" is a search for cat pictures, not for the word "photos".
+        let (query, filter) = apply_bare_type_word("cat photos");
+        assert_eq!(filter, Some("type:image"));
+        assert_eq!(query, "cat type:image");
+    }
+
+    #[test]
+    fn ordinary_words_are_untouched() {
+        let (query, filter) = apply_bare_type_word("invoice 2024");
+        assert_eq!(filter, None);
+        assert_eq!(query, "invoice 2024");
+    }
+
+    #[test]
+    fn explicit_grammar_still_wins() {
+        // A type word next to an explicit filter must not be reinterpreted by
+        // the natural-language pass.
+        let intent = compile_with_aliases("type:image photos", &[]);
+        assert_eq!(intent.query, "type:image photos");
+        assert!(intent.chips.is_empty());
+    }
 }
 
 #[cfg(test)]
