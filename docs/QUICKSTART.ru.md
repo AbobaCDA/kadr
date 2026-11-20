@@ -22,10 +22,18 @@ powershell -ExecutionPolicy Bypass -File tools\publish.ps1
 
 Дальше:
 
-1. Открой напечатанную ссылку → **Run workflow** → **Run workflow** (зелёная кнопка справа).
-2. Через ~20 минут внутри запуска появится артефакт `kadr-windows-…` — это zip
-   с установщиком `kadr_1.0.16_x64-setup.exe` и портативным `kadr-portable.exe`.
-3. Скачал, распаковал, запустил. Всё.
+1. Сборка стартует сама (или нажми **Run workflow** на странице Actions).
+2. Через ~25 минут забирай файл — ссылка постоянная, аккаунт GitHub не нужен:
+
+   ```
+   https://github.com/<ты>/kadr/releases/download/latest/kadr-setup.exe
+   https://github.com/<ты>/kadr/releases/download/latest/kadr-portable.exe
+   ```
+
+   Первый — установщик, второй — просто exe без установки. Тот же архив лежит
+   и в артефактах запуска (`kadr-windows-<sha>-full`), но артефакты требуют
+   входа в GitHub и живут 30 дней.
+3. Запустил. Всё.
 
 Любой `git push` в `master` пересобирает exe автоматически. Хочешь постоянную ссылку на
 файл — поставь тег:
@@ -124,6 +132,7 @@ src-tauri\target\release\bundle\nsis\kadr_1.0.16_x64-setup.exe
 | Антивирус ругается на установщик | Ожидаемо для неподписанного бинарника. Подпиши через `signtool` или добавь исключение. |
 | Хочется меньше размер | `npm run dist:slim` (~7 МБ) или `npm run size:slim` + обычная сборка. |
 | Хочу и в облаке, и slim | Actions → Run workflow → галочка **slim**. |
+| Ссылка на exe не работает | Сборка ещё идёт (~25 мин) или упала: смотри https://github.com/<ты>/kadr/actions. |
 | `-File tools\publish.ps1` не существует | PowerShell открыт не в папке `kadr`: `Get-Location`, затем `cd` в неё, либо запусти `ЗАПУСТИТЬ-СБОРКУ.cmd`. |
 | Release-шаг упал с 403 | Settings → Actions → General → Workflow permissions → Read and write. |
 | Другое имя/иконка | `tools/rebrand.sh "Имя" "app.твой.id" "exe-name"`, затем `npm run dist`. |

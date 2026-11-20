@@ -551,6 +551,32 @@ impl IndexerManager {
     /// Eco mode limits how often extraction jobs start while on battery.
     /// Documents already in flight finish normally; fresh watcher events are
     /// handled by the watcher thread and are not paced.
+    /// Throttles the crawl while physical memory is nearly exhausted.
+    ///
+    /// Runs on the extraction workers, so it must stay cheap: one `/proc` or
+    /// `GlobalMemoryStatusEx` read and a short sleep, no locks held.
+    fn pace_on_memory(
+        config: &Arc<RwLock<KensakuConfig>>,
+        status: &Arc<RwLock<IndexingStatus>>,
+    ) {
+        let mut announced = false;
+        while crate::util::power::memory_pressure() {
+            if !announced {
+                announced = true;
+                // parking_lot's `try_write` returns Option, not Result.
+                if let Some(mut st) = status.try_write() {
+                    st.current_status = "Low memory -- pausing the scan".to_string();
+                }
+            }
+            // A pause request ends the wait: the loop above this one re-checks
+            // `pause_indexing` and parks the workers properly.
+            if config.read().pause_indexing {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+
     fn pace_on_battery(
         config: &Arc<RwLock<KensakuConfig>>,
         battery: &Mutex<(Instant, bool)>,
@@ -593,6 +619,13 @@ impl IndexerManager {
             .map(|index| index.is_writable())
             .unwrap_or(false)
         {
+            return;
+        }
+        // A paused indexer must not start a crawl. The flag was honoured inside
+        // the worker loop, so on launch the walk still ran across every root
+        // before the first pause check -- which is the full-disk scan the user
+        // had just switched off.
+        if self.config.read().pause_indexing {
             return;
         }
         if self.is_running.swap(true, Ordering::SeqCst) {
@@ -660,7 +693,14 @@ impl IndexerManager {
             let ocr_signature_before = read_ocr_signature();
             let ocr_queued = Self::sync_ocr_state(&config_arc, &metadata);
 
-            let (watched_dirs, excluded_dirs, excluded_exts, crawl_mode, include_ignored) = {
+            let (
+                watched_dirs,
+                excluded_dirs,
+                excluded_exts,
+                crawl_mode,
+                include_ignored,
+                skip_hidden,
+            ) = {
                 let cfg = config_arc.read();
                 (
                     cfg.watched_dirs.clone(),
@@ -668,6 +708,7 @@ impl IndexerManager {
                     cfg.excluded_extensions.clone(),
                     cfg.crawl_mode,
                     cfg.include_ignored,
+                    cfg.skip_hidden,
                 )
             };
             // The collect hotkey *moves* files into the collection folder, so
@@ -730,11 +771,13 @@ impl IndexerManager {
             }
 
             // Phase 1: Collect all entries (jwalk is already parallel internally).
-            let all_entries = crate::indexer::walker::walk_directories_pruned(
+            let all_entries = crate::indexer::walker::walk_directories_with_mode(
                 &watched_dirs,
                 &excluded_dirs,
                 include_ignored,
                 &collect_prunes,
+                crawl_mode,
+                skip_hidden,
             );
             let total_entries = all_entries.len();
             {
@@ -920,6 +963,10 @@ impl IndexerManager {
                         // queue behind a background scan.
                         Self::yield_to_queries(&producer_query_flag);
                         Self::pace_on_battery(&producer_config, &battery_state, &pace_gate);
+                        // Memory, not just CPU: a crawl that outruns the page
+                        // file turns the whole desktop into a slideshow, and
+                        // the crawl is the one thing here that can wait.
+                        Self::pace_on_memory(&producer_config, &producer_status);
 
                         // Image dimensions come from the file header, which is
                         // cheap. Perceptual hashing needs a full decode; doing

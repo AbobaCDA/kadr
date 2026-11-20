@@ -259,6 +259,27 @@ pub fn walk_directories_pruned(
     include_ignored: bool,
     extra_prunes: &[PathBuf],
 ) -> Vec<FileEntry> {
+    walk_directories_with_mode(
+        dirs,
+        excluded_dirs,
+        include_ignored,
+        extra_prunes,
+        crate::config::CrawlMode::Balanced,
+        true,
+    )
+}
+
+/// [`walk_directories_pruned`] with an explicit crawl mode, which decides how
+/// many threads the directory walk may use. Callers that care about keeping the
+/// machine responsive pass the configured mode.
+pub fn walk_directories_with_mode(
+    dirs: &[PathBuf],
+    excluded_dirs: &[String],
+    include_ignored: bool,
+    extra_prunes: &[PathBuf],
+    crawl_mode: crate::config::CrawlMode,
+    skip_hidden: bool,
+) -> Vec<FileEntry> {
     let mut result = Vec::new();
     let mut ignore_dirs: Vec<PathBuf> = Vec::new();
     let excluded_set: HashSet<String> = excluded_dirs.iter().map(|s| s.to_lowercase()).collect();
@@ -291,9 +312,19 @@ pub fn walk_directories_pruned(
             continue;
         }
 
-        // TODO: make hidden-file skipping configurable via `KensakuConfig::skip_hidden`.
+        //
+        // jwalk defaults to one thread per core and keeps going while the
+        // machine is busy, so on a 3M-file crawl the *walk itself* saturated
+        // every core before any file was even opened. The cap comes from the
+        // crawl mode (see `power::crawl_threads`): balanced leaves a core for
+        // the desktop, eco uses half.
         let walker = jwalk::WalkDir::new(root)
-            .skip_hidden(true)
+            // The setting existed but was never read here, so "index hidden
+            // files" did nothing. Dot-folders still keep their own guard below.
+            .skip_hidden(skip_hidden)
+            .parallelism(jwalk::Parallelism::RayonNewPool(
+                crate::util::power::crawl_threads(crawl_mode),
+            ))
             .process_read_dir({
                 let excluded_set = excluded_set.clone();
                 let sensitive_set = sensitive_set.clone();

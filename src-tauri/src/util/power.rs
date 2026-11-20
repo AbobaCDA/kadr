@@ -7,7 +7,43 @@ use crate::config::CrawlMode;
 
 /// True only in `eco` mode while the machine is running on battery.
 pub fn should_pace(crawl_mode: CrawlMode) -> bool {
-    crawl_mode == CrawlMode::Eco && (on_battery() || heavy_load())
+    // Balanced paces as well. It used to be eco-only, and eco-only meant the
+    // default mode cheerfully kept a 3M-file crawl going while the machine was
+    // already at 100% -- the crawl then competed with the desktop for every
+    // core. Full remains "do not pace": that is the opt-in for a machine whose
+    // owner says it is fine.
+    match crawl_mode {
+        CrawlMode::Full => false,
+        CrawlMode::Balanced => heavy_load(),
+        CrawlMode::Eco => on_battery() || heavy_load(),
+    }
+}
+
+/// How many worker threads the crawl may use.
+///
+/// Leaving one core for the desktop is what keeps a machine responsive while
+/// indexing; `full` is the only mode that may use every core. Never zero.
+pub fn crawl_threads(crawl_mode: CrawlMode) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    match crawl_mode {
+        CrawlMode::Full => cores,
+        CrawlMode::Balanced => cores.saturating_sub(1).max(1),
+        CrawlMode::Eco => (cores / 2).max(1),
+    }
+}
+
+/// True when free physical memory has dropped below what the crawl needs.
+///
+/// 512 MiB is the floor a decoded-image buffer and a Tantivy commit can still
+/// work in. Unknown memory is never "low".
+pub fn memory_pressure() -> bool {
+    const FLOOR_BYTES: u64 = 512 * 1024 * 1024;
+    match memory_free_and_total() {
+        Some((free, _total)) => free < FLOOR_BYTES,
+        None => false,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -117,9 +153,127 @@ pub fn heavy_load() -> bool {
     averages[0] > cpus as f64 * 0.8
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+pub fn heavy_load() -> bool {
+    // Windows has no load average, and the previous stub returned `false`,
+    // which meant eco mode never backed off there at all. Two `GetSystemTimes`
+    // samples 120 ms apart give the CPU utilisation Task Manager shows.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    impl FileTime {
+        fn ticks(self) -> u64 {
+            ((self.high as u64) << 32) | self.low as u64
+        }
+    }
+    unsafe extern "system" {
+        fn GetSystemTimes(idle: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+    }
+
+    fn sample() -> Option<(u64, u64, u64)> {
+        let (mut idle, mut kernel, mut user) = (FileTime::default(), FileTime::default(), FileTime::default());
+        let ok = unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) };
+        if ok == 0 {
+            return None;
+        }
+        Some((idle.ticks(), kernel.ticks(), user.ticks()))
+    }
+
+    let Some((idle_a, kernel_a, user_a)) = sample() else {
+        return false;
+    };
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let Some((idle_b, kernel_b, user_b)) = sample() else {
+        return false;
+    };
+
+    // Kernel time includes idle time on Windows, hence the subtraction.
+    let idle = idle_b.saturating_sub(idle_a) as f64;
+    let busy =
+        (kernel_b.saturating_sub(kernel_a) + user_b.saturating_sub(user_a)) as f64 - idle;
+    let total = idle + busy;
+    if total <= 0.0 {
+        return false;
+    }
+    (busy / total) > 0.8
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn heavy_load() -> bool {
     false
+}
+
+/// Free and total physical memory in bytes, when the platform can tell.
+///
+/// `None` means "unknown", and every caller must treat it as "no limit" rather
+/// than "no memory left".
+#[cfg(windows)]
+pub fn memory_free_and_total() -> Option<(u64, u64)> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    unsafe extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+
+    let mut status = MemoryStatusEx {
+        length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        ..Default::default()
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    if ok == 0 {
+        return None;
+    }
+    Some((status.avail_phys, status.total_phys))
+}
+
+#[cfg(target_os = "linux")]
+pub fn memory_free_and_total() -> Option<(u64, u64)> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let mut free = None;
+    let mut total = None;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        match parts.next() {
+            Some("MemFree:") => free = parts.next().and_then(|v| v.parse::<u64>().ok()),
+            Some("MemTotal:") => total = parts.next().and_then(|v| v.parse::<u64>().ok()),
+            _ => {}
+        }
+    }
+    // MemFree excludes reclaimable cache; add it back so a healthy machine does
+    // not look full.
+    let cached = text
+        .lines()
+        .find(|l| l.starts_with("Cached:"))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    Some(((free? + cached) * 1024, total? * 1024))
+}
+
+#[cfg(target_os = "macos")]
+pub fn memory_free_and_total() -> Option<(u64, u64)> {
+    // `vm_stat` is not worth a syscall dance here; the caller falls back to no
+    // limit, which is the safe direction.
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub fn memory_free_and_total() -> Option<(u64, u64)> {
+    None
 }
 
 #[cfg(test)]
@@ -127,9 +281,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_and_balanced_never_pace() {
+    fn full_never_paces() {
+        // `full` is the opt-in for "use the machine": it must never throttle,
+        // whatever the load says.
         assert!(!should_pace(CrawlMode::Full));
-        assert!(!should_pace(CrawlMode::Balanced));
+    }
+
+    #[test]
+    fn balanced_and_eco_leave_a_core_for_the_desktop() {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        assert_eq!(crawl_threads(CrawlMode::Full), cores);
+        assert!(crawl_threads(CrawlMode::Balanced) < cores || cores == 1);
+        assert!(crawl_threads(CrawlMode::Eco) <= cores);
+        // Never zero: a crawl with no threads never finishes.
+        for mode in [CrawlMode::Full, CrawlMode::Balanced, CrawlMode::Eco] {
+            assert!(crawl_threads(mode) >= 1);
+        }
     }
 
     /// Eco mode calls on_battery() and heavy_load() which do OS I/O. Whatever
