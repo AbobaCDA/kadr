@@ -197,36 +197,46 @@ pub async fn search(
     let indexer = &state.indexer;
     indexer.query_in_flight.store(true, Ordering::SeqCst);
 
-    let metadata = indexer.metadata.read();
-    let content_index = indexer.content_index.read();
-    let unit_store = indexer.unit_store.read();
-    let cfg = indexer.config.read();
-    let max_results = cfg.max_results;
-    let semantic_enabled = cfg.semantic_enabled;
-    let aliases = cfg.alias_pairs();
-
+    // Only cheap reads happen under these guards. The expensive part of a
+    // search (scoring millions of metadata rows, then the semantic pass) used
+    // to run while holding them, which blocked the indexer's writes for the
+    // duration -- a query and a crawl could not make progress at the same
+    // time, so each waited for the other.
+    let (max_results, semantic_enabled, aliases) = {
+        let cfg = indexer.config.read();
+        (cfg.max_results, cfg.semantic_enabled, cfg.alias_pairs())
+    };
     // The UI asks for snippets separately (`get_snippets`) so the search
     // itself never touches file contents.
     let sort = sort
         .as_deref()
         .map(crate::search::SortOrder::parse)
         .unwrap_or_default();
-    let visual_store = indexer.visual_store.read();
-    let resp = SearchDispatcher::search_response_sorted_page(
-        &query,
-        &metadata,
-        &content_index,
-        Some(&unit_store),
-        Some(&visual_store),
-        semantic_enabled,
-        max_results,
-        req_seq,
-        sort,
-        &aliases,
-        offset.unwrap_or(0),
-        false,
-        after.as_deref(),
-    );
+    // The guards live in a block: the semantic pass and the metadata scoring
+    // are the expensive parts, and holding these locks across them blocked the
+    // indexer's writes for the whole query -- a search and a crawl then waited
+    // for each other instead of interleaving.
+    let resp = {
+        let metadata = indexer.metadata.read();
+        let content_index = indexer.content_index.read();
+        let unit_store = indexer.unit_store.read();
+        let visual_store = indexer.visual_store.read();
+        SearchDispatcher::search_response_sorted_page(
+            &query,
+            &metadata,
+            &content_index,
+            Some(&unit_store),
+            Some(&visual_store),
+            semantic_enabled,
+            max_results,
+            req_seq,
+            sort,
+            &aliases,
+            offset.unwrap_or(0),
+            false,
+            after.as_deref(),
+        )
+    };
 
     indexer.query_in_flight.store(false, Ordering::SeqCst);
     record_query_latency(started.elapsed().as_micros() as u64);
@@ -365,6 +375,11 @@ pub fn stats_for(indexer: &crate::indexer::IndexerManager) -> Result<serde_json:
         db.map(|db| db.vector_bytes().unwrap_or(0)).unwrap_or(0)
     };
 
+    // Scoped on purpose. This used to hold the metadata read lock while the
+    // count ran, and the settings panel polls this command -- so an open
+    // settings window put constant pressure on the lock a search needs. With
+    // millions of nodes the count is not free, and the contention showed up as
+    // multi-second searches while semantic indexing was running.
     let embed_queue_depth = {
         let db = indexer.metadata.read().db();
         db.map(|db| db.count_unembedded().unwrap_or(0)).unwrap_or(0)

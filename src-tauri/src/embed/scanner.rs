@@ -12,6 +12,10 @@ pub struct SemanticHit {
 
 pub struct ExactScanner;
 
+/// Below this share of the corpus, scanning the candidate set beats scanning
+/// every vector. Above it the extra indirection stops paying for itself.
+const ALLOWED_SWEEP_MAX_DENSITY: f32 = 0.30;
+
 impl ExactScanner {
     /// Exact parallel scan over memory-mapped / in-memory i8 vectors.
     /// Returns top-k hits grouped by node_id with max score and best unit range.
@@ -52,8 +56,32 @@ impl ExactScanner {
         let units = &store.units;
         let vectors = &store.vectors;
 
-        // 8-way parallel scan over units using Rayon
-        let scored_units: Vec<(usize, f32)> = (0..units.len())
+        // Cost of the membership test in the `allowed` set. The caller's set
+        // holds one entry per candidate, so it is 8x denser than the units it
+        // filters here: a query narrowed to `type:image` lets ~2% of the
+        // corpus through, and paying for a full scan of every vector just to
+        // discard 98% of the results cost ~2s per keystroke on a 1.6M-unit
+        // index. `par_iter` over the candidate set instead is 8x smaller and
+        // does no discarding at all.
+        //
+        // `store.node_to_units` already records which unit indices belong to a
+        // node, so no ordering assumption is needed and the membership check
+        // below becomes a no-op for anything gathered this way.
+        let allowed_density = match allowed {
+            Some(set) if !set.is_empty() => set.len() as f32 / units.len() as f32,
+            _ => 1.0,
+        };
+        let unit_indices: Vec<usize> = match allowed {
+            Some(set) if allowed_density <= ALLOWED_SWEEP_MAX_DENSITY => set
+                .iter()
+                .filter_map(|node_id| store.node_to_units.get(node_id))
+                .flat_map(|indices| indices.iter().copied())
+                .filter(|&idx| idx < units.len())
+                .collect(),
+            _ => (0..units.len()).collect(),
+        };
+
+        let scored_units: Vec<(usize, f32)> = unit_indices
             .into_par_iter()
             .filter_map(|idx| {
                 let unit = &units[idx];
@@ -102,21 +130,89 @@ impl ExactScanner {
             })
             .collect();
 
-        if hits.len() > limit {
-            hits.select_nth_unstable_by(limit, |a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            hits.truncate(limit);
-        }
-        hits.sort_by(|a, b| {
+        // Ties are broken by node id. Equal scores are common (a synthetic
+        // corpus gives every hit 1.0), and an unordered tie makes the result
+        // order depend on HashMap iteration -- which changes between runs and
+        // makes paging skip or repeat rows.
+        let rank = |a: &SemanticHit, b: &SemanticHit| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        });
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        };
+        if hits.len() > limit {
+            hits.select_nth_unstable_by(limit, rank);
+            hits.truncate(limit);
+        }
+        hits.sort_by(rank);
 
         hits
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use crate::embed::units::Unit;
+
+    fn unit(id: u64, node_id: u64) -> Unit {
+        Unit {
+            id,
+            node_id,
+            byte_start: 0,
+            byte_end: 10,
+            model_id: 1,
+        }
+    }
+
+    /// A filtered scan must return exactly what the exhaustive scan returns
+    /// once the filter is applied. The candidate-set sweep is an optimisation,
+    /// so any difference is a bug, not a tuning choice.
+    #[test]
+    fn candidate_sweep_matches_full_scan_with_filter() {
+        let mut store = UnitStore::new(4);
+        for node in 1..=40u64 {
+            // Three units per node, so the per-node grouping is exercised.
+            for k in 0..3u64 {
+                let vector = if node % 7 == 0 {
+                    [127i8, 0, 0, 0]
+                } else {
+                    [0, 60, 60, 0]
+                };
+                store.add_unit(unit(node * 10 + k, node), &vector);
+            }
+        }
+
+        let query = [127i8, 0, 0, 0];
+        // Sparse filter: only every 7th node is a candidate, well under the
+        // density threshold, so the candidate sweep runs.
+        let allowed: HashSet<u64> = (1..=40u64).filter(|n| n % 7 == 0).collect();
+        let swept = ExactScanner::scan_with_model(&query, &store, Some(&allowed), 10, None);
+        assert!(!swept.is_empty(), "the sweep must find the matching nodes");
+        assert!(swept.iter().all(|hit| allowed.contains(&hit.node_id)));
+
+        // Reference: score everything, then filter.
+        let everything = ExactScanner::scan_with_model(&query, &store, None, 1000, None);
+        let expected: Vec<u64> = everything
+            .iter()
+            .filter(|hit| allowed.contains(&hit.node_id))
+            .map(|hit| hit.node_id)
+            .take(10)
+            .collect();
+        let got: Vec<u64> = swept.iter().map(|hit| hit.node_id).collect();
+        assert_eq!(got, expected, "candidate sweep changed the ranking");
+    }
+
+    /// Dense filters must keep using the full scan and still be correct.
+    #[test]
+    fn dense_filter_still_scores_everything() {
+        let mut store = UnitStore::new(4);
+        for node in 1..=20u64 {
+            store.add_unit(unit(node, node), &[127i8, 0, 0, 0]);
+        }
+        let allowed: HashSet<u64> = (1..=20u64).collect();
+        let hits = ExactScanner::scan_with_model(&[127i8, 0, 0, 0], &store, Some(&allowed), 5, None);
+        assert_eq!(hits.len(), 5);
     }
 }
 

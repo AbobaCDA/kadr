@@ -11,6 +11,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+/// Sleeps up to `total`, waking early once `running` goes false.
+///
+/// The embedding worker is joined by the crawl (and by shutdown) before the
+/// stores are touched again. A plain `sleep` there means every stop waits out
+/// the nap -- and a crawl that stops this worker while it is preempted for a
+/// query turns that into a stalled UI.
+fn sleep_while(total: Duration, running: &AtomicBool) {
+    let step = Duration::from_millis(5);
+    let mut slept = Duration::ZERO;
+    while slept < total {
+        if !running.load(Ordering::SeqCst) {
+            return;
+        }
+        thread::sleep(step);
+        slept += step;
+    }
+}
+
 /// Cached chunk vectors for one content hash.
 type CachedChunks = Arc<Vec<(usize, usize, Vec<i8>)>>;
 
@@ -83,9 +101,11 @@ impl EmbeddingQueue {
                 let mut was_embedding = false;
 
                 while is_running.load(Ordering::SeqCst) {
-                    // Preempt if query in flight
+                    // Preempt if query in flight. `stop()` must not wait out a
+                    // sleep: the crawl joins this worker before it writes, so a
+                    // long nap here turns into a visible stall on every index.
                     if query_in_flight.load(Ordering::SeqCst) {
-                        thread::sleep(Duration::from_millis(50));
+                        sleep_while(Duration::from_millis(50), &is_running);
                         continue;
                     }
 
@@ -112,18 +132,22 @@ impl EmbeddingQueue {
                                 st.is_embedding = false;
                                 st.units_indexed = unit_store.read().len();
                                 st.semantic_ready = st.units_indexed > 0;
-                                let next_phase = if st.is_indexing {
-                                    st.phase.clone()
+                                // The queue drained: whatever phase the crawl
+                                // is in is the real one now. Keeping
+                                // "embedding" here left the status bar saying
+                                // "building the semantic index" forever, since
+                                // nothing else ever cleared it.
+                                st.phase = if st.is_indexing {
+                                    "extracting".to_string()
                                 } else {
                                     "idle".to_string()
                                 };
-                                st.phase = next_phase;
                             }
                             Self::emit_status(&app_handle, &status);
                         }
                         // Idle poll interval. Kept short so a crawl that stops
                         // this worker does not sit in `join` for a full second.
-                        thread::sleep(Duration::from_millis(200));
+                        sleep_while(Duration::from_millis(200), &is_running);
                         continue;
                     }
 
