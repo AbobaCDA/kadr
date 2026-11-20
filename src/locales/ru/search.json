@@ -39,9 +39,9 @@
   "removeInterpretation": "Убрать «{{source}}»",
   "removeFilter": "Убрать фильтр {{filter}}",
   "removeFilters": "Убрать фильтры",
-  "tryPdf": "Попробовать type:pdf",
-  "onlyFolders": "Только папки",
-  "noResultsNothing": "Пока ничего с именем {{query}}.",
+  "tryPdf": "Все PDF",
+  "onlyFolders": "Все папки",
+  "noResultsNothing": "Ничего не нашлось по «{{query}}». Поиск идёт по именам файлов, а не по смыслу.",
   "settingsTitle": "Настройки",
   "toast": {
     "pathCopied": "Путь скопирован"
@@ -172,5 +172,6 @@
     "changeFolder": "Изменить папку",
     "pickFolderTitle": "Выберите папку коллекции",
     "pickFolderHint": "Сюда будут переноситься найденные картинки и видео по хоткею."
-  }
+  },
+  "imagesInstead": "Все фото"
 }

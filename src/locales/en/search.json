@@ -37,9 +37,9 @@
   "removeInterpretation": "Remove “{{source}}”",
   "removeFilter": "Remove filter {{filter}}",
   "removeFilters": "Remove filters",
-  "tryPdf": "Try type:pdf",
-  "onlyFolders": "Nothing but folders",
-  "noResultsNothing": "Nothing called {{query}}, yet.",
+  "tryPdf": "All PDFs",
+  "onlyFolders": "All folders",
+  "noResultsNothing": "Nothing found for \"{{query}}\". Search matches file names, not meaning.",
   "settingsTitle": "Settings",
   "toast": {
     "pathCopied": "Path copied"
@@ -166,5 +166,6 @@
     "changeFolder": "Change folder",
     "pickFolderTitle": "Choose the collection folder",
     "pickFolderHint": "Found images and videos are moved here when you press the collect shortcut."
-  }
+  },
+  "imagesInstead": "All photos"
 }

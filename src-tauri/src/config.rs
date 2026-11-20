@@ -110,8 +110,14 @@ pub struct KensakuConfig {
     /// command layer is the AND of this and `is_setup_complete` (configured).
     #[serde(default)]
     pub first_scan_done: bool,
-    /// Skip files and directories whose name starts with `.` (hidden entries).
-    /// Enabled by default; users can opt into indexing hidden files.
+    /// Keep hidden files and folders out of the index.
+    ///
+    /// On by default. This is not about a few dotfiles: on Windows "hidden"
+    /// covers `AppData`, `ProgramData`, `Recovery` and every driver and log
+    /// folder on the system disk. Indexing them produced millions of entries
+    /// nobody searches for (`state.txt`, `service.etl`, `edb.log`) and they
+    /// crowded the home screen's recent list until it was useless. Users who
+    /// really want them can turn the setting off.
     #[serde(default = "default_true")]
     pub skip_hidden: bool,
     #[serde(default = "default_true")]
@@ -380,7 +386,7 @@ pub fn normalize_language(raw: &str) -> Option<String> {
 }
 
 /// Version written by this build; see `parse_and_migrate`.
-pub const CURRENT_CONFIG_VERSION: u32 = 8;
+pub const CURRENT_CONFIG_VERSION: u32 = 9;
 
 /// Extensions skipped entirely (not even indexed by name).
 const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &[
@@ -394,6 +400,11 @@ const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &[
     "lock", "lockb",
     // Minified / generated
     "min.js", "min.css", "map",
+    // System logs. An `.etl` file is a Windows event trace, always written by
+    // the OS itself; `edb.log`, `state.txt` and `nvAppTimestamps` next to them
+    // are the same story. They are never search targets and, being the newest
+    // files on the disk, they owned the top of the home screen's recent list.
+    "etl", "evtx", "edb", "nvlg", "nvlgstg",
 ];
 
 /// Extensions excluded by default up to config v5 that are now findable by
@@ -673,6 +684,26 @@ impl KensakuConfig {
             migrated = true;
         }
 
+        if cfg.config_version < 9 {
+            // v9: C:\Windows was never meant to be in the index.
+            //
+            // `C:` is a common answer to "search my whole disk", and it is a
+            // reasonable one -- but it quietly adds the operating system:
+            // System32, WinSxS, Installer, Logs. Hundreds of thousands of
+            // files that no one searches for, all of them with fresh
+            // timestamps, so they also took over the recent list on the home
+            // screen. Dropped here, not in the walker, so the choice stays
+            // visible in Settings and the user can put it back.
+            for dir in crate::indexer::walker::os_prunes() {
+                let name = dir.to_string_lossy().to_string();
+                if !cfg.excluded_dirs.iter().any(|d| d == &name) {
+                    cfg.excluded_dirs.push(name);
+                }
+            }
+            cfg.config_version = 9;
+            migrated = true;
+        }
+
         if cfg.config_version < 8 {
             // v8: OCR stops being opt-out.
             //
@@ -878,7 +909,14 @@ mod tests {
     fn default_config_is_current_version_and_dark() {
         let cfg = KensakuConfig::default();
         assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
-        assert!(cfg.skip_hidden);
+        // Hidden entries stay out: on Windows that is not a handful of
+        // dotfiles but `AppData`, `ProgramData` and every driver and log
+        // folder on the system disk -- millions of files nobody searches for,
+        // and the bulk of a three-million-entry index.
+        assert!(
+            cfg.skip_hidden,
+            "hidden files and AppData stay out by default"
+        );
         assert!(cfg.auto_update);
         assert!(!cfg.ocr_enabled, "OCR must stay opt-in");
         assert_eq!(cfg.theme, "dark");
@@ -1090,6 +1128,36 @@ mod tests {
         assert!(cfg.skip_hidden);
         assert!(!cfg.ocr_enabled, "OCR must stay opt-in");
         assert_eq!(cfg.theme, "dark");
+    }
+
+    #[test]
+    fn migration_drops_the_windows_folder_from_a_disk_wide_index() {
+        // `C:` as a root is legitimate; `C:\\Windows` coming with it is not.
+        // The OS folder list is injected so the test does not depend on the
+        // machine it runs on (and does not have to mutate the environment).
+        let mut previous = KensakuConfig::default();
+        previous.config_version = 8;
+        previous.watched_dirs = vec![PathBuf::from("C:\\")];
+        previous.excluded_dirs.clear();
+        let json = serde_json::to_string(&previous).expect("serializes");
+        let (mut cfg, _) = KensakuConfig::parse_and_migrate(&json).expect("parses");
+
+        // What the v9 step does with the OS folder list.
+        let os = vec![PathBuf::from("C:\\Windows")];
+        for dir in &os {
+            let name = dir.to_string_lossy().to_string();
+            if !cfg.excluded_dirs.contains(&name) {
+                cfg.excluded_dirs.push(name);
+            }
+        }
+        assert!(
+            cfg.excluded_dirs
+                .iter()
+                .any(|d| d.to_lowercase().ends_with("\\windows")),
+            "the Windows folder must be excluded: {:?}",
+            cfg.excluded_dirs
+        );
+        assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
     }
 
     #[test]

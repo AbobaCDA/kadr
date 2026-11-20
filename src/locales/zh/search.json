@@ -37,9 +37,9 @@
   "removeInterpretation": "移除“{{source}}”",
   "removeFilter": "移除筛选 {{filter}}",
   "removeFilters": "清除筛选",
-  "tryPdf": "试试 type:pdf",
-  "onlyFolders": "只看文件夹",
-  "noResultsNothing": "还没有名为 {{query}} 的结果。",
+  "tryPdf": "所有 PDF",
+  "onlyFolders": "所有文件夹",
+  "noResultsNothing": "没有找到“{{query}}”。搜索按文件名匹配，而不是按含义。",
   "settingsTitle": "设置",
   "toast": {
     "pathCopied": "已复制路径"
@@ -166,5 +166,6 @@
     "changeFolder": "更改文件夹",
     "pickFolderTitle": "选择收集文件夹",
     "pickFolderHint": "按下收集快捷键后，找到的图片和视频会移动到这里。"
-  }
+  },
+  "imagesInstead": "所有照片"
 }

@@ -64,11 +64,15 @@ function RecentTile({
   );
 }
 
-/** File-type entry points, always visible on the home screen.
+/** File-type entry points, visible on the home screen in every state.
  *
  * The type filter existed only as query grammar (`type:image`), so a user who
  * typed the word "image" searched for that word in file names and found
- * nothing. One click is a better first experience than a syntax lesson. */
+ * nothing. One click is a better first experience than a syntax lesson.
+ *
+ * Rendered above the recent list too: the first version only showed it when
+ * the home screen was completely empty, which is never true once an index
+ * exists -- so the buttons were invisible exactly where they were needed. */
 function TypeRow({ onSearch }: { onSearch: (query: string) => void }) {
   const { t } = useTranslation("home");
   // `as const` keeps the keys inside i18next's typed key union; a plain
@@ -205,6 +209,9 @@ export function HomeView({
 
   return (
     <div className="px-3.5 pb-4 pt-1.5">
+      <div className="mb-4">
+        <TypeRow onSearch={onSearch} />
+      </div>
       {saved.length > 0 && (
         <div className="mb-4 flex flex-wrap items-baseline gap-x-5 gap-y-2">
           <span className="t-meta text-subtle">{t("saved")}</span>

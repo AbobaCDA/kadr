@@ -140,6 +140,21 @@ pub fn runtime_dir_prunes() -> Vec<PathBuf> {
     vec![crate::config::KensakuConfig::config_dir()]
 }
 
+/// Operating-system folders that a "search the whole disk" root must not pull
+/// in.
+///
+/// `C:` is a normal thing to add, and it silently means "also index Windows":
+/// System32 alone is tens of thousands of files, WinSxS holds hard-link farms
+/// of the same binaries, and every one of them is churn that no search wants.
+/// The list is stored in the config rather than applied silently here, so the
+/// exclusions show up in Settings and can be undone.
+pub fn os_prunes() -> Vec<PathBuf> {
+    let Some(root) = std::env::var_os("SystemRoot") else {
+        return Vec::new();
+    };
+    vec![PathBuf::from(root)]
+}
+
 /// The OS's application-data tree directly under the home folder:
 /// `%USERPROFILE%\AppData` on Windows, `~/Library` on macOS. Browser caches,
 /// app containers and logs: huge, constantly changing, and never what a
@@ -548,6 +563,21 @@ mod tests {
         assert!(!filtered.iter().any(|entry| entry.name == "also-moved.png"));
 
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn the_system_folder_is_an_optional_exclusion_not_a_silent_skip() {
+        // The walker prunes what it is told to prune; `C:\\Windows` reaches it
+        // through the config, so a user who really wants it can say so.
+        let prunes = os_prunes();
+        if cfg!(windows) {
+            assert_eq!(prunes.len(), 1);
+            assert!(prunes[0].to_string_lossy().to_lowercase().ends_with("windows"));
+        } else {
+            // No `%SystemRoot%` elsewhere: nothing is excluded behind the
+            // user's back.
+            assert!(prunes.is_empty() || !prunes[0].as_os_str().is_empty());
+        }
     }
 
     #[test]

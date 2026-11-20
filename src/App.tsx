@@ -1563,6 +1563,16 @@ function App() {
                             inputRef.current?.focus();
                           }}
                         />
+                        {/* Pictures are the main thing people search for, and
+                            the most common dead end was typing a sentence
+                            about them and getting "nothing found". */}
+                        <SuggestChip
+                          label={t("imagesInstead")}
+                          onClick={() => {
+                            setQuery("type:image");
+                            inputRef.current?.focus();
+                          }}
+                        />
                       </div>
                     </div>
                   ) : null

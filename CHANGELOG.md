@@ -5,6 +5,26 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.19
+- **The type buttons are visible where people actually look.** 1.0.18 rendered
+  them only on a completely empty home screen, which never happens once an
+  index exists: the screen showed the recent list instead, and the buttons were
+  invisible exactly where they were needed. They are now the first block of the
+  home screen, above "recent".
+- **"Search the whole disk" no longer makes the index mostly Windows.**
+  `C:\` was accepted as a root and quietly pulled in `C:\Windows`:
+  `System32`, `WinSxS`, `Installer`, `Logs` -- hundreds of thousands of files
+  nobody searches for. A config migration (v9) adds the OS folder to the
+  exclusions, where it is visible in Settings and can be undone.
+- **System log noise out of the collection.** `.etl`, `.evtx`, `edb`, `nvlg*`
+  are Windows event traces and driver logs: always the newest files on the
+  disk, so they owned the top of the home screen.
+- **Hidden entries stay out by default**, now documented for what it means on
+  Windows: `AppData`, `ProgramData`, every driver and log folder. The setting
+  was already on by default; the docs now say why.
+- A dead end explains itself: "nothing found" says search matches file names,
+  not meaning, and offers "All photos" next to "All PDFs" / "All folders".
+
 ### 1.0.18
 - **Search by type, without learning a syntax.** The type filter existed only
   as query grammar (`type:image`), so typing the word "image" searched file
