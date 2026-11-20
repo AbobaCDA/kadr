@@ -13,17 +13,6 @@ pub struct ReleaseAsset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubRelease {
-    pub tag_name: String,
-    pub name: Option<String>,
-    pub body: Option<String>,
-    pub html_url: String,
-    pub published_at: Option<String>,
-    #[serde(default)]
-    pub assets: Vec<ReleaseAsset>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
     pub current_version: String,
     pub latest_version: String,
@@ -165,71 +154,87 @@ const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600
 /// metadata check. `None` when the release does not publish one.
 static SUMS_URL: Mutex<Option<String>> = Mutex::new(None);
 
-/// Release feed probed by [`check_for_update`].
+/// Where the update check reads the answer.
 ///
-/// A fork must point at its *own* releases: the inherited value was
-/// `yjid/kensaku`, so "download and install the update" would have fetched the
-/// upstream installer and replaced this build with someone else's application.
-///
-/// The tag is `latest`, a **prerelease** the Windows workflow republishes on
-/// every successful build (see `.github/workflows/windows-installer.yml`).
-/// `/releases/latest` is the wrong endpoint for it: GitHub's "latest" means
-/// "latest non-prerelease", and it answered `404 Not Found` -- so the in-app
-/// update check could never see a build at all. The list endpoint has to be
-/// used instead, and it is published in creation order.
-const RELEASE_LIST_API: &str = "https://api.github.com/repos/AbobaCDA/kadr/releases?per_page=10";
+/// No GitHub **API** here on purpose. The API allows 60 requests per hour per
+/// IP address without a token, and a desktop app that checks for updates was
+/// answered with `403 rate limit exceeded` -- the check could not work even
+/// though the release existed. These are plain release-asset URLs: a CDN file,
+/// no rate limit, no login, no token to embed in the binary.
+const DOWNLOAD_BASE: &str = "https://github.com/AbobaCDA/kadr/releases/download/latest";
+const VERSION_URL: &str = concat!(
+    "https://github.com/AbobaCDA/kadr/releases/download/latest/",
+    "version.json"
+);
+const SETUP_URL: &str = concat!(
+    "https://github.com/AbobaCDA/kadr/releases/download/latest/",
+    "kadr-setup.exe"
+);
+const SUMS_FALLBACK_URL: &str = concat!(
+    "https://github.com/AbobaCDA/kadr/releases/download/latest/",
+    "SHA256SUMS"
+);
+/// The release page, for "View on GitHub" and for the notes.
+const RELEASE_PAGE: &str = "https://github.com/AbobaCDA/kadr/releases/tag/latest";
 
-/// Picks the release an update should come from.
-///
-/// Prefers the rolling `latest` tag, whatever GitHub thinks of its prerelease
-/// flag; falls back to the newest published release so a future switch to
-/// plain version tags keeps working. The list arrives newest first.
-fn select_release(releases: &[GitHubRelease]) -> Option<GitHubRelease> {
-    releases
-        .iter()
-        .find(|release| release.tag_name.trim_start_matches('v').eq_ignore_ascii_case("latest"))
-        .or_else(|| releases.first())
-        .cloned()
+/// What the rolling `latest` release publishes about itself.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PublishedVersion {
+    version: String,
+    #[serde(default)]
+    commit: String,
+    #[serde(default)]
+    built: String,
 }
 
-/// Checks GitHub for the latest release metadata.
+/// What the user is told when nothing newer exists.
+///
+/// GitHub's own words: the rolling tag is a prerelease, and `/releases/latest`
+/// means "latest non-prerelease", which answered `404` for this repository.
+/// Nothing here is a secret.
+const ROLLING_TAG_NOTE: &str = "Filled in from the release page; this build reads `version.json` instead of the GitHub API.";
+
+/// Checks the rolling `latest` release for a newer build.
 pub fn check_for_update() -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION");
 
-    let releases: Vec<GitHubRelease> = ureq::get(RELEASE_LIST_API)
-        .set("User-Agent", &format!("kensaku-updater/{}", current_version))
+    let published: PublishedVersion = ureq::get(VERSION_URL)
+        .set("User-Agent", &format!("kadr-updater/{}", current_version))
         .timeout(METADATA_TIMEOUT)
         .call()
-        .map_err(|e| format!("Failed to reach GitHub release API: {e}"))?
+        .map_err(|e| format!("Failed to reach the release page: {e}"))?
         .into_json()
-        .map_err(|e| format!("Failed to parse release information: {e}"))?;
+        .map_err(|e| format!("Failed to read version.json: {e}"))?;
 
-    let resp = select_release(&releases)
-        .ok_or_else(|| "This repository has published no releases yet".to_string())?;
-
-    if let Ok(mut slot) = SUMS_URL.lock() {
-        *slot = resp
-            .assets
-            .iter()
-            .find(|asset| asset.name.eq_ignore_ascii_case("SHA256SUMS"))
-            .map(|asset| asset.browser_download_url.clone());
+    if published.version.trim().is_empty() {
+        return Err("The release page published no version".to_string());
     }
 
-    let latest_tag = resp.tag_name.trim_start_matches('v');
-    let has_update = is_newer_version(latest_tag, current_version);
-    let chosen_asset = select_platform_asset(&resp.assets);
+    // Checksums sit next to the installers; the download verifies against them
+    // when present, exactly as it did with the API's asset list.
+    if let Ok(mut slot) = SUMS_URL.lock() {
+        *slot = Some(SUMS_FALLBACK_URL.to_string());
+    }
+
+    let latest_tag = published.version.trim().trim_start_matches('v').to_string();
+    let has_update = is_newer_version(&latest_tag, current_version);
+    let asset_name = "kadr-setup.exe".to_string();
 
     Ok(UpdateInfo {
         current_version: current_version.to_string(),
-        latest_version: latest_tag.to_string(),
+        latest_version: latest_tag.clone(),
         has_update,
-        release_name: resp.name.unwrap_or_else(|| resp.tag_name.clone()),
-        release_notes: resp.body.unwrap_or_default(),
-        release_url: resp.html_url,
-        published_at: resp.published_at.unwrap_or_default(),
-        asset_name: chosen_asset.as_ref().map(|a| a.name.clone()),
-        asset_url: chosen_asset.as_ref().map(|a| a.browser_download_url.clone()),
-        asset_size: chosen_asset.as_ref().map(|a| a.size),
+        release_name: format!("Kadr {latest_tag}"),
+        release_notes: format!(
+            "Built {} from commit {}.\n\n{ROLLING_TAG_NOTE}",
+            if published.built.is_empty() { "at an unknown time" } else { &published.built },
+            if published.commit.is_empty() { "unknown" } else { &published.commit[..published.commit.len().min(7)] }
+        ),
+        release_url: RELEASE_PAGE.to_string(),
+        published_at: published.built.clone(),
+        asset_size: None,
+        asset_url: Some(format!("{DOWNLOAD_BASE}/{asset_name}")),
+        asset_name: Some(asset_name),
     })
 }
 
@@ -568,26 +573,33 @@ mod tests {
     }
 
     #[test]
-    fn the_rolling_latest_tag_is_found_even_though_it_is_a_prerelease() {
-        // The real payload: one prerelease tagged `latest`, and older versioned
-        // releases. `/releases/latest` skips prereleases and returned 404, so
-        // every in-app update check failed with "no releases".
-        let payload = r#"[
-            {"tag_name": "v1.0.17", "html_url": "u", "name": "1.0.17", "body": "", "assets": []},
-            {"tag_name": "latest", "html_url": "u", "name": "rolling", "body": "", "assets": []}
-        ]"#;
-        let releases: Vec<GitHubRelease> = serde_json::from_str(payload).expect("payload");
-        let picked = select_release(&releases).expect("a release");
-        assert_eq!(picked.tag_name, "latest");
+    fn the_version_file_drives_the_update_check() {
+        // What the workflow publishes next to the installer. The check reads
+        // this instead of the GitHub API, which answered 403 (60 requests per
+        // hour per IP without a token).
+        let payload = r#"{"version":"1.0.19","commit":"46d5bc8abc","built":"2026-11-20T08:00:00Z"}"#;
+        let published: PublishedVersion = serde_json::from_str(payload).expect("payload");
+        assert_eq!(published.version, "1.0.19");
+        // The fields the UI shows must survive a minimal file too.
+        let minimal: PublishedVersion =
+            serde_json::from_str(r#"{"version":"1.0.20"}"#).expect("minimal payload");
+        assert_eq!(minimal.commit, "");
+    }
 
-        // With no rolling tag at all, the newest release is used.
-        let versioned: Vec<GitHubRelease> =
-            serde_json::from_str(r#"[{"tag_name": "v2.0.0", "html_url": "u", "assets": []}]"#)
-                .expect("payload");
-        assert_eq!(
-            select_release(&versioned).map(|r| r.tag_name),
-            Some("v2.0.0".to_string())
-        );
+    #[test]
+    fn the_update_urls_need_no_token_and_no_api() {
+        // A plain release asset: CDN, no rate limit, no login. Guarding this
+        // matters because the old code went through api.github.com, where an
+        // anonymous client is capped at 60 requests per hour.
+        for url in [VERSION_URL, SETUP_URL, SUMS_FALLBACK_URL, RELEASE_PAGE] {
+            assert!(
+                !url.contains("api.github.com"),
+                "{url} must not depend on the rate-limited API"
+            );
+            assert!(url.starts_with("https://"), "{url} must be https");
+        }
+        assert!(VERSION_URL.ends_with("/version.json"));
+        assert!(SETUP_URL.ends_with("/kadr-setup.exe"));
     }
 
     #[test]

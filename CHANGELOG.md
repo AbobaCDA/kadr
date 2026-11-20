@@ -5,6 +5,18 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.20
+- **"Update" no longer goes through the GitHub API.** 1.0.19 asked
+  `api.github.com/...?per_page=10` and the user got `status code 403`: the API
+  allows 60 anonymous requests per hour *per IP address*, and a desktop app
+  checking for updates shares that bucket with everything else on the network
+  (browsers, phones, other apps). The check now reads `version.json`, a release
+  asset next to the installer -- a CDN file with no rate limit, no login and no
+  token inside the binary. The checksum verification is unchanged.
+- 1.0.18's `/releases/latest` endpoint was one bug and one limit apart from
+  working: the rolling tag is a prerelease (so `/latest` answered 404), and the
+  list endpoint that replaced it is rate-limited. Release downloads are not.
+
 ### 1.0.19
 - **The type buttons are visible where people actually look.** 1.0.18 rendered
   them only on a completely empty home screen, which never happens once an
