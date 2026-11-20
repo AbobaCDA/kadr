@@ -24,6 +24,25 @@ versioning: [SemVer](https://semver.org/).
 - The setup wizard's OCR default no longer contradicts the backend's.
 
 ### 1.0.17
+- **The crawler can no longer freeze the desktop.** Three things contributed:
+  the directory walk used jwalk's default of one thread per core with no
+  throttling at all; `balanced` (the default) only paced while *on battery*,
+  and on Windows the load probe was a stub that always answered "not busy", so
+  the crawl never backed off there; and nothing watched memory. Now:
+  `crawl_threads()` caps the walk (balanced leaves a core, eco uses half), the
+  Windows load probe is real (two `GetSystemTimes` samples, the same number
+  Task Manager shows), pacing applies to `balanced` as well as `eco`, and the
+  extraction workers park themselves while free physical memory is under
+  512 MiB.
+- **"Pause indexing" now actually pauses.** The flag was only read inside the
+  worker loop, so launching the app started a full walk over every root before
+  the first check. `start_indexing` refuses to start while it is set.
+- **`skip_hidden` is honoured.** The setting existed in the config and in the
+  UI, but the walker hardcoded `skip_hidden(true)`, so "index hidden files" did
+  nothing. It is threaded through from the config.
+- The settings dropdown showed "Full speed" whenever `crawl_mode` was missing,
+  while the backend defaults to `balanced` -- the UI was describing the
+  opposite of what was running.
 - **In-app update points at this fork.** The update check probed
   `api.github.com/repos/yjid/kensaku/releases/latest`, so "Download & Install
   Update" would have fetched *upstream's* installer and replaced Kadr with
