@@ -156,7 +156,13 @@
       "doctor": "健康诊断",
       "model": "向量模型状态",
       "addFolder": "注册监视路径"
-    }
+    },
+    "overnight": "夜间运行",
+    "overnightDescription": "启动后即可离开：扫描以全速运行，同时生成缩略图，之后浏览无需等待。",
+    "overnightStart": "开始运行",
+    "overnightStop": "停止",
+    "overnightProgress": "缩略图已完成：{{done}} / {{total}}",
+    "overnightNote": "大量照片通常 5–8 小时足够。不会自动启动，仅此按钮触发；停止后恢复原来的索引速度。"
   },
   "ai": {
     "modelCard": "向量模型",

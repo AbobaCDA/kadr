@@ -582,7 +582,8 @@ impl IndexerManager {
         battery: &Mutex<(Instant, bool)>,
         gate: &Mutex<Instant>,
     ) {
-        let crawl_mode = config.read().crawl_mode;
+        // An overnight run asks for every core and no pacing.
+        let crawl_mode = crate::util::power::effective_mode(config.read().crawl_mode);
         let should_pace = {
             let mut cached = battery.lock();
             if cached.0.elapsed() >= Duration::from_secs(30) {

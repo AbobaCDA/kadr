@@ -894,6 +894,8 @@ const CHEATSHEET = [
   [">add folder", "addFolder"],
 ] as const;
 
+type OvernightStatus = { running: boolean; done: number; total: number; skipped: number };
+
 function SearchSection({
   config,
   setConfig,
@@ -902,6 +904,42 @@ function SearchSection({
   setConfig: React.Dispatch<React.SetStateAction<KensakuConfig | null>>;
 }) {
   const { t } = useTranslation("settings");
+  // Polled while the section is open: a run of several hours needs a visible
+  // number, and an idle backend is not woken for anything else.
+  const [overnight, setOvernight] = useState<OvernightStatus | null>(null);
+  const [overnightError, setOvernightError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () => {
+      invoke<OvernightStatus>("get_overnight_status")
+        .then((status) => {
+          if (alive) setOvernight(status);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const timer = window.setInterval(tick, 1500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const startOvernight = () => {
+    setOvernightError(null);
+    invoke("start_overnight_run")
+      .then(() => invoke<OvernightStatus>("get_overnight_status"))
+      .then(setOvernight)
+      .catch((err) => setOvernightError(String(err)));
+  };
+  const stopOvernight = () => {
+    invoke("stop_overnight_run")
+      .then(() => invoke<OvernightStatus>("get_overnight_status"))
+      .then(setOvernight)
+      .catch((err) => setOvernightError(String(err)));
+  };
+
   return (
     <>
       <Card title={t("search.results")}>
@@ -989,6 +1027,61 @@ function SearchSection({
             }
           />
         </Field>
+      </Card>
+
+      <Card title={t("search.overnight")}>
+        <div className="space-y-3 p-4">
+          <p className="text-[12px] leading-[18px] text-muted">
+            {t("search.overnightDescription")}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-primary h-9"
+              onClick={startOvernight}
+              disabled={Boolean(overnight?.running)}
+            >
+              {t("search.overnightStart")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary h-9"
+              onClick={stopOvernight}
+              disabled={!overnight?.running}
+            >
+              {t("search.overnightStop")}
+            </button>
+          </div>
+          {overnight && overnight.total > 0 && (
+            <div className="space-y-1">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full rounded-full bg-ink transition-[width] duration-500"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(
+                        (100 * (overnight.done + overnight.skipped)) / overnight.total,
+                      ),
+                    )}%`,
+                  }}
+                />
+              </div>
+              <p className="t-meta text-subtle">
+                {t("search.overnightProgress", {
+                  done: overnight.done,
+                  total: overnight.total,
+                })}
+              </p>
+            </div>
+          )}
+          {overnightError && (
+            <p className="text-[12px] leading-[18px] text-warn">{overnightError}</p>
+          )}
+          <p className="text-[11px] leading-[16px] text-subtle">
+            {t("search.overnightNote")}
+          </p>
+        </div>
       </Card>
 
       <Card title={t("search.aliases")}>

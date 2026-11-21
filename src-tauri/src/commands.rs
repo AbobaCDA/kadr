@@ -758,6 +758,13 @@ fn build_file_preview(path: &str) -> Result<FilePreview, String> {
 }
 
 /// Cache directory for generated image thumbnails.
+///
+/// Public because the overnight warm-up writes into the same place the grid
+/// reads from; two different paths would mean warming a cache nobody serves.
+pub fn thumbnail_cache_dir_public() -> PathBuf {
+    thumbnail_cache_dir()
+}
+
 fn thumbnail_cache_dir() -> PathBuf {
     KensakuConfig::config_dir().join("thumbs")
 }
@@ -1572,6 +1579,43 @@ pub async fn reset_all(
     // Never returns: the process exits and relaunches, and the fresh process
     // applies the pending reset before constructing any application state.
     app.restart();
+}
+
+/// Starts an overnight run: full-speed scan plus thumbnail warm-up.
+///
+/// One button instead of a pile of settings, because the request was "I start
+/// it in the evening, come back in the morning". It does exactly two things:
+/// lets the crawl use every core (without changing the saved crawl mode, which
+/// still applies tomorrow), and pre-builds the thumbnails the results grid will
+/// ask for. Both stop on [`stop_overnight_run`].
+#[tauri::command]
+pub async fn start_overnight_run(state: State<'_, AppState>) -> Result<(), String> {
+    // Night mode is what makes the scan use every core; the mode itself is
+    // restored by `stop_overnight_run`, so the saved setting keeps its meaning.
+    crate::warm::set_night_mode(true);
+    state.indexer.start_indexing();
+    // The index has to exist before thumbnails can be picked from it; the
+    // warm-up takes what is there now and the crawl keeps adding to it.
+    let warm_started = crate::warm::warm_start(state.indexer.clone());
+    crate::say_err!(
+        "[Kadr] overnight run started (thumbnail warm-up {})",
+        if warm_started { "started" } else { "already running" }
+    );
+    Ok(())
+}
+
+/// Ends the overnight run and puts the machine back to its normal mode.
+#[tauri::command]
+pub async fn stop_overnight_run() -> Result<(), String> {
+    crate::warm::stop();
+    crate::warm::set_night_mode(false);
+    Ok(())
+}
+
+/// Progress for the settings screen: how much of the warm-up is finished.
+#[tauri::command]
+pub async fn get_overnight_status() -> Result<crate::warm::WarmStatus, String> {
+    Ok(crate::warm::status())
 }
 
 #[tauri::command]

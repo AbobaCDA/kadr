@@ -5,6 +5,19 @@
 
 use crate::config::CrawlMode;
 
+/// The effective crawl mode right now.
+///
+/// An overnight run means "use the machine" -- every core, no pacing -- without
+/// rewriting the user's saved setting, which has to keep meaning what it meant
+/// the next morning.
+pub fn effective_mode(configured: CrawlMode) -> CrawlMode {
+    if crate::warm::night_mode() {
+        CrawlMode::Full
+    } else {
+        configured
+    }
+}
+
 /// True only in `eco` mode while the machine is running on battery.
 pub fn should_pace(crawl_mode: CrawlMode) -> bool {
     // Balanced paces as well. It used to be eco-only, and eco-only meant the

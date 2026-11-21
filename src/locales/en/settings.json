@@ -156,7 +156,13 @@
       "doctor": "Health diagnostics",
       "model": "Embedding model status",
       "addFolder": "Register a watch path"
-    }
+    },
+    "overnight": "Overnight run",
+    "overnightDescription": "Start it and walk away: the scan runs at full speed and builds thumbnails at the same time, so scrolling later costs nothing.",
+    "overnightStart": "Start the run",
+    "overnightStop": "Stop",
+    "overnightProgress": "Thumbnails ready: {{done}} of {{total}}",
+    "overnightNote": "Five to eight hours is usually enough for a large photo library. Nothing starts by itself: only this button. Stopping restores your usual indexing speed."
   },
   "ai": {
     "modelCard": "Embedding model",

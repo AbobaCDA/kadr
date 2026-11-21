@@ -18,6 +18,7 @@ pub mod query;
 pub mod search;
 pub mod tray_icon;
 pub mod updater;
+pub mod warm;
 pub mod util;
 
 use config::KensakuConfig;
@@ -526,6 +527,9 @@ pub fn run() {
             commands::run_doctor,
             commands::reset_all,
             commands::rebuild_index,
+            commands::start_overnight_run,
+            commands::stop_overnight_run,
+            commands::get_overnight_status,
             commands::run_doctor_action,
             commands::get_reset_pending,
             commands::get_autostart,

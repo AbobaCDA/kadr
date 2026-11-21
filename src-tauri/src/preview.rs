@@ -69,6 +69,26 @@ pub fn kind_for(filename: &str) -> Option<Kind> {
     }
 }
 
+/// Where the *thumbnail* for `source` lives. `get_thumbnail` serves this path
+/// to the results grid, so a warmer that writes anywhere else produces a cache
+/// nobody reads.
+pub fn thumbnail_target(source: &Path, out_dir: &Path) -> PathBuf {
+    crate::indexer::extract::image::thumbnail_path(source, out_dir)
+}
+
+/// True when a fresh thumbnail already exists for `source`.
+pub fn thumbnail_is_cached(source: &Path, out_dir: &Path) -> bool {
+    is_fresh(&thumbnail_target(source, out_dir), source)
+}
+
+/// Generates the thumbnail a results grid will ask for, reusing a fresh one.
+///
+/// Used by the overnight warm-up: decoding a thousand photos while the user is
+/// asleep turns "scroll and wait" into "scroll" when they come back.
+pub fn warm_thumbnail(source: &Path, out_dir: &Path) -> Option<PathBuf> {
+    crate::indexer::extract::image::thumbnail(source, out_dir)
+}
+
 /// Returns a 480px JPEG preview for `source`, generating it if needed.
 pub fn preview_jpeg(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
     let name = source

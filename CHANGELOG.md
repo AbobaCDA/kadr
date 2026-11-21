@@ -5,6 +5,21 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.21
+- **Overnight run: start it in the evening, come back to a finished index.**
+  Settings → Search has one button. It runs the scan at full speed (every core,
+  no pacing -- the saved "balanced" setting is untouched and applies again in
+  the morning) and, in parallel, builds the thumbnails the results grid will
+  ask for. That second part is what removes the scrolling wait: before this,
+  every photo was decoded the first time it scrolled into view.
+- Progress is shown as "thumbnails ready: N of M", and Stop returns the machine
+  to its normal mode. Nothing starts by itself.
+- The thumbnail warmer writes to the same cache `get_thumbnail` serves, via one
+  shared path helper -- a warmer writing somewhere else would have produced a
+  cache nobody reads.
+- Cloud-only placeholders are skipped rather than downloaded, and the pass
+  parks itself while free memory is under 512 MiB, same as the crawl.
+
 ### 1.0.20
 - **"Update" no longer goes through the GitHub API.** 1.0.19 asked
   `api.github.com/...?per_page=10` and the user got `status code 403`: the API
