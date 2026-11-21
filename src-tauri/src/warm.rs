@@ -106,9 +106,9 @@ pub fn warm_start(manager: Arc<IndexerManager>) -> bool {
                     if WARM_STOP.load(Ordering::Relaxed) {
                         break;
                     }
-                    let Some(entry) = metadata.materialize(i as u32) else {
-                        continue;
-                    };
+                    // `materialize` always answers: a slot in the arena is a
+                    // file entry, and dirs are filtered on the next line.
+                    let entry = metadata.materialize(i as u32);
                     if entry.is_dir {
                         continue;
                     }
