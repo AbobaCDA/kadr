@@ -170,6 +170,12 @@ const SETUP_URL: &str = concat!(
     "https://github.com/AbobaCDA/kadr/releases/download/latest/",
     "kadr-setup.exe"
 );
+/// The portable build: the application itself, no installer wrapper.
+const PORTABLE_URL: &str = concat!(
+    "https://github.com/AbobaCDA/kadr/releases/download/latest/",
+    "kadr-portable.exe"
+);
+const PORTABLE_NAME: &str = "kadr-portable.exe";
 const SUMS_FALLBACK_URL: &str = concat!(
     "https://github.com/AbobaCDA/kadr/releases/download/latest/",
     "SHA256SUMS"
@@ -326,6 +332,16 @@ pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus
                 .to_string(),
         );
     }
+
+    // An install the user owns can be replaced in place, and then the right
+    // download is the portable build: it *is* the application, with no
+    // installer to run. See `self_update` for how the swap is carried out.
+    let in_place = crate::self_update::can_swap_in_place();
+    let (asset_url, asset_name) = if in_place {
+        (PORTABLE_URL, PORTABLE_NAME)
+    } else {
+        (asset_url, asset_name)
+    };
 
     if DOWNLOADING.swap(true, Ordering::SeqCst) {
         return Ok(get_status());
@@ -502,6 +518,22 @@ pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         const DETACHED_PROCESS: u32 = 0x00000008;
+
+        // Preferred path: swap the executable, restart, done. No installer, no
+        // UAC, no second copy of the app -- which is the whole complaint about
+        // "updating" by re-installing.
+        if crate::self_update::can_swap_in_place() {
+            match crate::self_update::spawn_swap_helper(&path) {
+                Ok(_) => {
+                    crate::say_err!("[Kadr] update: swapping the executable in place");
+                    app.exit(0);
+                    return Ok(());
+                }
+                Err(e) => crate::say_err!(
+                    "[Kadr] in-place update unavailable ({e}); running the installer instead"
+                ),
+            }
+        }
 
         if path_str.ends_with(".msi") {
             let mut cmd = std::process::Command::new("msiexec");

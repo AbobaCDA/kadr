@@ -272,11 +272,12 @@
     "downloading": "正在下载更新…",
     "downloadPercent": "正在下载更新… {{percent}}% ({{downloaded}} / {{total}})",
     "readyToInstall": "更新已准备就绪",
-    "installAndRestart": "立即重启并安装",
+    "installAndRestart": "重启并更新",
     "viewReleaseNotes": "在 GitHub 上查看",
     "publishedOn": "发布于 {{date}}",
     "downloadFailed": "更新下载失败：{{error}}",
-    "noAssetFound": "未找到适合当前平台的安装包，请从 GitHub 手动下载。"
+    "noAssetFound": "未找到适合当前平台的安装包，请从 GitHub 手动下载。",
+    "inPlaceNote": "新版本直接替换旧版本：无需安装程序、无需安装向导、不产生第二个快捷方式。"
   },
   "models": {
     "title": "模型文件",

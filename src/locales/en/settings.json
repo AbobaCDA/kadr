@@ -272,11 +272,12 @@
     "downloading": "Downloading update…",
     "downloadPercent": "Downloading update… {{percent}}% ({{downloaded}} / {{total}})",
     "readyToInstall": "Update ready to install",
-    "installAndRestart": "Restart & Install Now",
+    "installAndRestart": "Restart and update",
     "viewReleaseNotes": "View on GitHub",
     "publishedOn": "Released on {{date}}",
     "downloadFailed": "Update download failed: {{error}}",
-    "noAssetFound": "No compatible package found for your platform. Please download from GitHub."
+    "noAssetFound": "No compatible package found for your platform. Please download from GitHub.",
+    "inPlaceNote": "The new version replaces the old one in place: no installer, no setup wizard, no second shortcut."
   },
   "models": {
     "title": "Model files",

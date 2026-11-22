@@ -5,6 +5,23 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.23
+- **"Update" is an update now, not a re-installation.** The button downloaded
+  `kadr-setup.exe` and ran it: a UAC prompt, a setup wizard and a second copy
+  of the app installed over the first. The update now downloads the portable
+  build and swaps it in place -- the app exits, the new file takes the old
+  file's name, the app starts again. Nothing is installed, no wizard, no prompt
+  (when the app's folder is writable by the user).
+  - A running `.exe` cannot be overwritten but can be renamed, so the app
+    stages a copy of itself as a helper, exits, and lets the helper do the swap
+    with retries (antivirus holds a fresh file open for a moment).
+  - The saved setting and the index are untouched: this replaces one file.
+  - When the folder needs administrator rights (a `Program Files` install) the
+    helper is not used and the installer runs exactly as before -- that is what
+    UAC is for. The same fallback covers a missing download.
+  - New `--kadr-swap` argument is internal: it makes the binary act as the
+    helper. It is ignored unless all three paths and a pid are given.
+
 ### 1.0.22
 - **A long listing no longer stops halfway.** "All my photos" returned a few
   hundred rows and then stopped for good, with nothing in the UI saying why.

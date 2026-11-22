@@ -2020,6 +2020,11 @@ function AboutSection({
                     </span>
                   )}
 
+                  {updateStatus?.ready_to_install && (
+                    <span className="text-[11px] leading-[16px] text-subtle">
+                      {t("about.inPlaceNote")}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => openUrl(updateInfo.release_url)}

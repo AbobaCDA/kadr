@@ -16,6 +16,7 @@ pub mod ocr_indra;
 pub mod preview;
 pub mod query;
 pub mod search;
+pub mod self_update;
 pub mod tray_icon;
 pub mod updater;
 pub mod warm;

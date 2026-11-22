@@ -272,11 +272,12 @@
     "downloading": "Загрузка обновления…",
     "downloadPercent": "Загрузка обновления… {{percent}}% ({{downloaded}} / {{total}})",
     "readyToInstall": "Обновление готово к установке",
-    "installAndRestart": "Перезапустить и установить сейчас",
+    "installAndRestart": "Перезапустить и обновить",
     "viewReleaseNotes": "Посмотреть на GitHub",
     "publishedOn": "Выпущено {{date}}",
     "downloadFailed": "Не удалось скачать обновление: {{error}}",
-    "noAssetFound": "Не найден совместимый пакет для вашей платформы. Скачайте с GitHub."
+    "noAssetFound": "Не найден совместимый пакет для вашей платформы. Скачайте с GitHub.",
+    "inPlaceNote": "Новая версия встанет на место старой: без установщика, без мастера установки и без второго ярлыка."
   },
   "models": {
     "title": "Файлы моделей",
