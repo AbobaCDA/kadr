@@ -778,8 +778,24 @@ impl MetadataStore {
 
         let entries = self.entries_snapshot();
         let mut order: Vec<u32> = (0..entries.len() as u32).collect();
+        // Compare exactly what the keyset cursor compares.
+        //
+        // The two used to disagree on Windows. This sort compared `PathBuf`s,
+        // which is a plain `OsStr` comparison, while
+        // `path_order_position_after` compares paths **as strings** (the cursor
+        // is a `str`, so it can only compare against a string form). The two
+        // orderings differ -- `/` and `\\` do not compare the same way as
+        // separators and as characters -- so a listing
+        // ("all my images") computed its cursor from a row of one ordering and
+        // then looked it up in the other, landed in the wrong place, laid the
+        // remaining pages over files it had already returned, and the page
+        // looked empty. `has_more` said "there is more", nothing new arrived,
+        // the grid treated the query as exhausted -- the listing stopped dead
+        // halfway down the disk.
         order.sort_unstable_by(|&a, &b| {
-            entries[a as usize].path.cmp(&entries[b as usize].path)
+            let left = entries[a as usize].path.to_string_lossy();
+            let right = entries[b as usize].path.to_string_lossy();
+            left.cmp(&right)
         });
         let built = Arc::new(order);
         *self.cached_path_order.write() = Some((current_gen, Arc::clone(&built)));
@@ -1066,6 +1082,69 @@ mod tests {
             char_bloom: 0,
             content_pending: false,
         }
+    }
+
+    #[test]
+    fn keyset_cursor_walks_every_row_exactly_once() {
+        // The listing cursor must agree with the order it indexes into. When
+        // the two disagreed, "all my images" stopped halfway: the cursor was
+        // computed from one ordering and looked up in the other, the page came
+        // back full of rows already shown, and the grid gave up.
+        let mut temp = TempStore::new("keyset-walk");
+        let mut paths: Vec<PathBuf> = vec![
+            "C:\\a\\b.jpg",
+            "C:\\a\\b\\c.jpg",
+            "C:\\a-b\\d.jpg",
+            "C:\\a\\z.jpg",
+            "C:\\B\\c.jpg",
+            "C:\\a\\b\\e.jpg",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        paths.sort();
+        {
+            let store = temp.store();
+            for path in &paths {
+                store.add(entry(path, false));
+            }
+        }
+        let store = temp.store();
+        let order = store.path_order();
+        // Walk in pages of two, the way the grid does.
+        let mut seen: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..paths.len() {
+            let start = match cursor.as_deref() {
+                Some(c) => store.path_order_position_after(&order, c),
+                None => 0,
+            };
+            let page: Vec<String> = order[start..]
+                .iter()
+                .take(2)
+                .map(|&i| {
+                    store
+                        .entries_snapshot()
+                        .get(i as usize)
+                        .map(|e| e.path.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                })
+                .collect();
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().cloned();
+            seen.extend(page);
+        }
+        let mut unique = seen.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            seen.len(),
+            "a row was returned twice: {seen:?}"
+        );
+        assert_eq!(seen.len(), paths.len(), "the walk stopped early: {seen:?}");
     }
 
     #[test]

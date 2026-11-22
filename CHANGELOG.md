@@ -5,6 +5,22 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.22
+- **A long listing no longer stops halfway.** "All my photos" returned a few
+  hundred rows and then stopped for good, with nothing in the UI saying why.
+  Two bugs stacked up:
+  - The backend sorted paths one way (`PathBuf`, i.e. `OsStr` comparison) and
+    looked the paging cursor up another way (as a `str`). On Windows the two
+    orderings differ, so the cursor landed in the wrong place and the next page
+    was filled with rows already on screen. The sort now compares exactly what
+    the cursor compares.
+  - The grid treated "a page that added nothing new" as the end of the results
+    and marked the query exhausted -- even though the backend said `has_more`.
+    It now walks the cursor forward a few times before giving up, and stops only
+    when the cursor itself stops moving.
+- A test walks a path listing page by page and asserts every row comes back
+  exactly once, which is the property both bugs violated.
+
 ### 1.0.21
 - **Overnight run: start it in the evening, come back to a finished index.**
   Settings → Search has one button. It runs the scan at full speed (every core,

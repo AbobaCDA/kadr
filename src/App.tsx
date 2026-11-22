@@ -564,26 +564,48 @@ function App() {
          pages by offset. Both report `has_more`, so the grid stops when the
          backend says the match set ended, not when a page happens to look
          short. */
-      const cursor = cursorRef.current;
-      const offset = resultsLenRef.current;
-      const res = await invoke<SearchResponse>("search", {
-        query: query.trim(),
-        sort,
-        offset: cursor ? undefined : offset,
-        after: cursor ?? undefined,
-      });
-      // Discard a page for a query the user has already left.
-      if (queryRef.current !== query) return;
-      /* `invalidate` runs before the state update: the updater may be deferred
-         to the next render, so counting inside it reported 0 and stopped the
-         scroll early. */
-      const fresh = res.results.filter((row) => !loadedPathsRef.current.has(row.path));
-      for (const row of fresh) loadedPathsRef.current.add(row.path);
-      if (fresh.length > 0) setResults((prev) => [...prev, ...fresh]);
-      setTotal(res.total ?? 0);
-      setTotalExact(res.total_exact ?? true);
-      cursorRef.current = res.next_after ?? null;
-      const more = (res.has_more ?? true) && fresh.length > 0;
+      /* A page can come back non-empty and still add nothing new -- rows we
+         already have. Treating that as "the end" was how a long listing died
+         halfway: the backend said there was more, one page happened to overlap,
+         the grid called the query exhausted, and scrolling stopped for good.
+         Instead, walk the cursor forward a bounded number of times. The loop
+         only stops early when the cursor itself stops moving, which is the one
+         condition that really is terminal. */
+      let cursor = cursorRef.current;
+      let offset = resultsLenRef.current;
+      let added = 0;
+      let more = false;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const res = await invoke<SearchResponse>("search", {
+          query: query.trim(),
+          sort,
+          offset: cursor ? undefined : offset,
+          after: cursor ?? undefined,
+        });
+        // Discard a page for a query the user has already left.
+        if (queryRef.current !== query) return;
+        /* `invalidate` runs before the state update: the updater may be deferred
+           to the next render, so counting inside it reported 0 and stopped the
+           scroll early. */
+        const fresh = res.results.filter((row) => !loadedPathsRef.current.has(row.path));
+        for (const row of fresh) loadedPathsRef.current.add(row.path);
+        if (fresh.length > 0) {
+          added += fresh.length;
+          setResults((prev) => [...prev, ...fresh]);
+        }
+        setTotal(res.total ?? 0);
+        setTotalExact(res.total_exact ?? true);
+        const next = res.next_after ?? null;
+        const cursorMoved = next !== null && next !== cursor;
+        cursorRef.current = next;
+        // Offset paging (ranked queries) has no cursor: advance past what we
+        // already hold.
+        offset = resultsLenRef.current + added;
+        more = res.has_more ?? true;
+        if (!more || (!cursorMoved && !cursor)) break;
+        if (fresh.length > 0) break; // the page did its job
+        if (!cursorMoved) break; // same cursor twice: nothing left to walk
+      }
       setHasMore(more);
       if (!more) setExhaustedKey(requestKey);
     } catch (err) {
