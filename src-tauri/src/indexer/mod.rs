@@ -2093,7 +2093,7 @@ impl IndexerManager {
                     };
                 }
             }
-            Self::emit_status(&self.app_handle, &self.status);
+            Self::emit_status(&self.app_handle, &self.status.read());
             crate::say_err!("[Kadr] semantic index disabled; embedding queue stopped");
         }
         let ocr_changed =
@@ -2128,7 +2128,7 @@ impl IndexerManager {
                 };
             }
             drop(st);
-            Self::emit_status(&self.app_handle, &self.status);
+            Self::emit_status(&self.app_handle, &self.status.read());
             // Unpausing has to actually restart the work: the workers parked in
             // `wait_while_paused` only exist while a crawl is running, and a
             // crawl that was stopped from the settings banner has no workers
