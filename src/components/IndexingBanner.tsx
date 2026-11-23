@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import type { IndexingStatus } from "../types";
 import { formatComma } from "../lib/format";
 
@@ -12,8 +12,16 @@ import { formatComma } from "../lib/format";
  * Indexing can start from anywhere (launch, a config change, an OCR pack
  * finishing, the watcher noticing an overflow) and used to be invisible from
  * Settings: the panel covered the status line in the main window, so a scan
- * looked like the app had hung. This sits at the top of the panel for as long
- * as there is work, and says which phase and how far along it is. */
+ * looked like the app had hung. This sits at the very bottom of the panel, in
+ * the scroll area's flow, for as long as there is work.
+ *
+ * It used to live in the footer next to the save buttons, and that is exactly
+ * what made the footer look broken: a bar with its own background, its own
+ * border and a wide indeterminate stripe sat right above the save row, so the
+ * whole strip read as one disabled/blocked area. The buttons were clickable
+ * (and "Save" was legitimately grey because nothing had been edited yet), but
+ * nobody could tell. Keeping the bar at the bottom of the page body fixes the
+ * impression without hiding the progress. */
 
 type Phase = IndexingStatus["phase"];
 
@@ -82,7 +90,7 @@ function percentOf(status: IndexingStatus): number | null {
   return null;
 }
 
-export function IndexingBanner() {
+export function IndexingBanner({ onStop }: { onStop?: () => void }) {
   const { t } = useTranslation("settings");
   const [status, setStatus] = useState<IndexingStatus | null>(null);
 
@@ -146,6 +154,21 @@ export function IndexingBanner() {
       <p className="shrink-0 tabular-nums text-[11px] text-subtle">
         {percent === null ? t("indexingBanner.workingShort") : `${percent}%`}
       </p>
+      {/* A scan of a big disk runs for hours. Until now the only way to make
+          it stop chewing CPU was to find the pause switch elsewhere in
+          Settings, and the semantic crawl in particular could not be stopped
+          at all. */}
+      {onStop && (
+        <button
+          type="button"
+          onClick={onStop}
+          title={t("indexingBanner.stopHint")}
+          className="btn btn-secondary h-7 shrink-0 !rounded-full px-2.5 text-[11px]"
+        >
+          <X className="h-3 w-3" strokeWidth={2} />
+          {t("indexingBanner.stop")}
+        </button>
+      )}
       <p className="sr-only">{t("indexingBanner.screenReader")}</p>
     </div>
   );

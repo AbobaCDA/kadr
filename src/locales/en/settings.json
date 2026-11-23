@@ -101,7 +101,10 @@
     "drop": "Drop folders here to add them for watching",
     "placeholder": "/absolute/path/to/directory",
     "add": "Add",
-    "summary": "{{files}} files indexed across {{folders}} folders"
+    "summary": "{{files}} files indexed across {{folders}} folders",
+    "browse": "Choose folder…",
+    "pickTitle": "Which folder should be searched?",
+    "addTyped": "Add the path typed in the field"
   },
   "exclusions": {
     "presets": "Presets",
@@ -129,7 +132,7 @@
     "list": "List",
     "ranking": "Ranking",
     "semantic": "Semantic search",
-    "semanticDescription": "Static embeddings, ~0.1 ms per query, fused with BM25 via RRF.",
+    "semanticDescription": "Meaning-based vector search: finds files even when the words differ. It is expensive -- the second heaviest part of a scan after OCR. Name search works without it.",
     "background": "Background indexing",
     "crawlMode": "Crawl mode",
     "crawlModeDescription": "Balanced uses idle I/O and CPU priority. Eco also paces work on battery. Full speed keeps normal priority.",
@@ -428,7 +431,9 @@
     "rebuilding": "Rebuilding the index",
     "working": "Indexing",
     "workingShort": "Working",
-    "screenReader": "Indexing is in progress. Search results will include the remaining files when it finishes."
+    "screenReader": "Indexing is in progress. Search results will include the remaining files when it finishes.",
+    "stop": "Stop",
+    "stopHint": "Stop indexing. What has been found stays; resume it in General."
   },
   "collect": {
     "title": "Collection",

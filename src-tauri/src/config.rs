@@ -120,7 +120,14 @@ pub struct KensakuConfig {
     /// really want them can turn the setting off.
     #[serde(default = "default_true")]
     pub skip_hidden: bool,
-    #[serde(default = "default_true")]
+    /// Build the semantic (vector) index while scanning.
+    ///
+    /// Off by default now, for the same reason OCR is: it is the second most
+    /// expensive thing the crawl does. On a 776k-file index the user watched
+    /// "building the semantic index" for hours and could not tell whether it
+    /// was worth anything -- it was on because a default said so, not because
+    /// anyone chose it. Keyword search over file names works without it.
+    #[serde(default)]
     pub semantic_enabled: bool,
     #[serde(default = "default_semantic_model")]
     pub semantic_model: String,
@@ -386,7 +393,7 @@ pub fn normalize_language(raw: &str) -> Option<String> {
 }
 
 /// Version written by this build; see `parse_and_migrate`.
-pub const CURRENT_CONFIG_VERSION: u32 = 9;
+pub const CURRENT_CONFIG_VERSION: u32 = 10;
 
 /// Extensions skipped entirely (not even indexed by name).
 const DEFAULT_EXCLUDED_EXTENSIONS: &[&str] = &[
@@ -503,7 +510,7 @@ impl Default for KensakuConfig {
             is_setup_complete: false,
             first_scan_done: false,
             skip_hidden: true,
-            semantic_enabled: true,
+            semantic_enabled: false,
             semantic_model: "static".to_string(),
             semantic_f32_table: false,
             crawl_mode: CrawlMode::default(),
@@ -681,6 +688,15 @@ impl KensakuConfig {
             // codes fall back to auto-detect (None).
             cfg.language = cfg.language.as_deref().and_then(normalize_language);
             cfg.config_version = 7;
+            migrated = true;
+        }
+
+        if cfg.config_version < 10 {
+            // v10: the semantic index stops being opt-out. It ran by default,
+            // it is the heaviest part of a scan after OCR, and the switch that
+            // was meant to disable it only applied to the next crawl.
+            cfg.semantic_enabled = false;
+            cfg.config_version = 10;
             migrated = true;
         }
 
@@ -1158,6 +1174,22 @@ mod tests {
             cfg.excluded_dirs
         );
         assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
+    }
+
+    #[test]
+    fn migration_turns_the_semantic_index_off_too() {
+        // It ran by default and was the heaviest part of a scan after OCR; the
+        // user spent hours watching it and could not turn it off mid-run.
+        let mut previous = KensakuConfig::default();
+        previous.config_version = 9;
+        previous.semantic_enabled = true;
+        let json = serde_json::to_string(&previous).expect("serializes");
+        let cfg = KensakuConfig::load_from_str(&json);
+        assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
+        assert!(
+            !cfg.semantic_enabled,
+            "an old config must not keep rebuilding vectors by default"
+        );
     }
 
     #[test]

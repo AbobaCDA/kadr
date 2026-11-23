@@ -101,7 +101,10 @@
     "drop": "将文件夹拖放到此处以添加监视",
     "placeholder": "/absolute/path/to/directory",
     "add": "添加",
-    "summary": "已索引 {{files}} 个文件，共 {{folders}} 个文件夹"
+    "summary": "已索引 {{files}} 个文件，共 {{folders}} 个文件夹",
+    "browse": "选择文件夹…",
+    "pickTitle": "选择要搜索的文件夹",
+    "addTyped": "添加输入框中输入的路径"
   },
   "exclusions": {
     "presets": "预设",
@@ -129,7 +132,7 @@
     "list": "列表",
     "ranking": "排序",
     "semantic": "语义搜索",
-    "semanticDescription": "静态向量，每次查询约 0.1 毫秒，通过 RRF 与 BM25 融合。",
+    "semanticDescription": "基于语义的向量搜索：即使用词不同也能找到文件。开销较大——仅次于 OCR。不使用它也可以按文件名搜索。",
     "background": "后台索引",
     "crawlMode": "扫描模式",
     "crawlModeDescription": "均衡模式使用空闲时的 I/O 和 CPU 优先级。节能模式在电池供电时也会限速。全速模式保持正常优先级。",
@@ -428,7 +431,9 @@
     "rebuilding": "正在重建索引",
     "working": "正在索引",
     "workingShort": "处理中",
-    "screenReader": "正在建立索引。完成后搜索结果将包含其余文件。"
+    "screenReader": "正在建立索引。完成后搜索结果将包含其余文件。",
+    "stop": "停止",
+    "stopHint": "停止索引。已找到的内容会保留，可在“常规”中继续。"
   },
   "collect": {
     "title": "收集",

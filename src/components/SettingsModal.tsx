@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -167,6 +168,28 @@ export function Settings({ onClose, initialSection, onConfigSaved }: SettingsPro
     }
   };
 
+  // "Stop" in the indexing banner: pauses background work for good (it is the
+  // same switch as `pause_indexing`, so it survives a restart) and drops the
+  // semantic queue, which otherwise keeps running on whatever it had already
+  // picked up. Nothing is lost -- the index keeps what it has and the crawl
+  // resumes from where it stopped when the user turns this back on.
+  const stopIndexing = async () => {
+    if (!config) return;
+    const next: KensakuConfig = {
+      ...config,
+      pause_indexing: true,
+      semantic_enabled: false,
+    };
+    setConfig(next);
+    try {
+      await invoke("save_config", { config: next });
+      onConfigSaved();
+    } catch (err) {
+      console.error("Stop indexing failed:", err);
+      alert(te("saveSettings", { error: String(err) }));
+    }
+  };
+
   return (
     <div className="fade-in absolute inset-0 z-40 flex bg-bg">
       <nav data-tauri-drag-region className="relative z-10 flex w-[200px] shrink-0 flex-col overflow-y-auto px-3 pb-3 pt-5">
@@ -210,6 +233,12 @@ export function Settings({ onClose, initialSection, onConfigSaved }: SettingsPro
               <ConfigSkeleton />
             )}
           </div>
+
+          {/* Indexing is announced here, at the bottom of the page body, not in
+              the footer: the footer row is the save controls, and a banner with
+              its own background directly above them made the whole strip look
+              greyed out while a scan ran. */}
+          <IndexingBanner onStop={stopIndexing} />
         </div>
 
         <footer className="relative z-10 flex shrink-0 flex-col gap-2 pb-3">
@@ -218,6 +247,9 @@ export function Settings({ onClose, initialSection, onConfigSaved }: SettingsPro
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${dirty ? "bg-warning" : "bg-success/70"}`} />
               {dirty ? t("footer.unsaved") : saved ? t("footer.saved") : t("footer.upToDate")}
             </span>
+            {/* Deliberately not disabled while indexing. A scan runs for
+                hours on a big disk, and "add a folder" must not wait for it:
+                the backend applies the change and reconciles. */}
             <button type="button" onClick={() => handleSave(true)} disabled={saving || !config} className="btn btn-ghost h-8 !rounded-full px-3 text-[12px]">
               <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} />
               {t("footer.saveReindex")}
@@ -228,11 +260,6 @@ export function Settings({ onClose, initialSection, onConfigSaved }: SettingsPro
             </button>
           </div>
 
-          {/* Indexing is announced at the bottom of the panel. The top edge is
-              where the close button lives, and the main window's status line is
-              hidden behind this overlay, so this is the one place a running
-              scan can be seen without getting in the way. */}
-          <IndexingBanner />
         </footer>
         {discardOpen && (
           <DiscardDialog
@@ -641,7 +668,28 @@ function FoldersSection({
 }) {
   const { t } = useTranslation("settings");
   const [input, setInput] = useState("");
+  const [pickError, setPickError] = useState<string | null>(null);
   const { stats } = useStats(null);
+
+  // "Add folder" should open the folder picker, not demand a hand-typed path.
+  const pickFolder = async () => {
+    setPickError(null);
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: true,
+        title: t("folders.pickTitle"),
+      });
+      const paths = (Array.isArray(picked) ? picked : [picked]).filter(
+        (p): p is string => typeof p === "string" && p.length > 0,
+      );
+      if (paths.length > 0) addDropped(paths);
+    } catch (err) {
+      // A cancelled dialog is not an error worth showing; anything else is.
+      const message = String(err);
+      if (!/cancel/i.test(message)) setPickError(message);
+    }
+  };
 
   const addDir = () => {
     const t = input.trim();
@@ -728,12 +776,25 @@ function FoldersSection({
           <button
             type="button"
             onClick={addDir}
+            disabled={!input.trim()}
             className="btn btn-secondary h-8 px-3 text-[12px]"
+            title={t("folders.addTyped")}
           >
             <Plus className="h-3.5 w-3.5" />
             {t("folders.add")}
           </button>
+          <button
+            type="button"
+            onClick={pickFolder}
+            className="btn btn-primary h-8 px-3 text-[12px]"
+          >
+            <FolderTree className="h-3.5 w-3.5" />
+            {t("folders.browse")}
+          </button>
         </div>
+        {pickError && (
+          <p className="px-4 pb-2 text-[11px] text-warn">{pickError}</p>
+        )}
         {stats && stats.index.files > 0 && (
           <p className="border-t border-line px-4 py-2 font-mono text-[11px] text-subtle">
             {t("folders.summary", {
@@ -982,7 +1043,7 @@ function SearchSection({
           description={t("search.semanticDescription")}
         >
           <Switch
-            checked={config.semantic_enabled ?? true}
+            checked={config.semantic_enabled ?? false}
             onChange={(v) => setConfig((c) => (c ? { ...c, semantic_enabled: v } : c))}
           />
         </Field>

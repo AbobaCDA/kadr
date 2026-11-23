@@ -1433,7 +1433,10 @@ impl IndexerManager {
             *watcher_handle.lock() = Some(handle);
 
             // Start background embedding worker if semantic search is enabled
-            if config_arc.read().semantic_enabled {
+            // Not while the user has stopped indexing: the semantic crawl used
+            // to start regardless, so "Pause" left a worker building vectors in
+            // the background. `apply_config` starts it when the pause is lifted.
+            if config_arc.read().semantic_enabled && !config_arc.read().pause_indexing {
                 let mut eq_guard = embedding_queue.lock();
                 if eq_guard.is_none() {
                     let model = ModelRegistry::global().clone();
@@ -2059,6 +2062,39 @@ impl IndexerManager {
 
     pub fn apply_config(&self, config: KensakuConfig) -> Result<(), String> {
         let previous = self.config.read().clone();
+        // Turning the semantic index off used to be a setting that only
+        // applied to the *next* crawl: the embedding worker kept chewing
+        // through the queue it had already filled, so the user saw
+        // "building the semantic index" long after switching it off. Stopping
+        // it here is what makes the switch mean something.
+        if previous.semantic_enabled && !config.semantic_enabled {
+            // `stop()` joins the worker, which can be in the middle of an
+            // embedding pass; doing that on the command thread would freeze
+            // the settings panel. Take the queue out and stop it off-thread.
+            let queue = self
+                .embedding_queue
+                .lock()
+                .take();
+            if let Some(mut queue) = queue {
+                std::thread::spawn(move || queue.stop());
+            }
+            // The queue is gone, so nothing will ever clear the "embedding"
+            // phase it set -- the status bar would keep claiming it is
+            // building the semantic index after the user switched it off.
+            {
+                let mut st = self.status.write();
+                st.is_embedding = false;
+                if st.phase == "embedding" {
+                    st.phase = if st.is_indexing {
+                        "extracting".to_string()
+                    } else {
+                        "idle".to_string()
+                    };
+                }
+            }
+            Self::emit_status(&self.app_handle, &self.status);
+            crate::say_err!("[Kadr] semantic index disabled; embedding queue stopped");
+        }
         let ocr_changed =
             previous.ocr_enabled != config.ocr_enabled || previous.ocr_engine != config.ocr_engine;
         let extractors_changed = previous.extractors != config.extractors;
@@ -2074,6 +2110,56 @@ impl IndexerManager {
         crate::indexer::extract::image::set_ocr_max_image_bytes(config.ocr_max_image_bytes);
         crate::indexer::extract::set_content_caps(config.content_max_file_size_mb, config.content_max_text_bytes);
         crate::embed::set_max_semantic_units(config.content_max_semantic_units);
+
+        // Keep the reported phase honest: "paused" is what the status bar and
+        // the settings footer show, and it has to come from the config the
+        // user just saved rather than from the last crawl's bookkeeping.
+        if previous.pause_indexing != config.pause_indexing {
+            let mut st = self.status.write();
+            st.paused = config.pause_indexing && st.is_indexing;
+            if st.paused {
+                st.phase = "paused".to_string();
+            } else if st.phase == "paused" {
+                st.phase = if st.is_indexing {
+                    "extracting".to_string()
+                } else {
+                    "idle".to_string()
+                };
+            }
+            drop(st);
+            Self::emit_status(&self.app_handle, &self.status);
+            // Unpausing has to actually restart the work: the workers parked in
+            // `wait_while_paused` only exist while a crawl is running, and a
+            // crawl that was stopped from the settings banner has no workers
+            // left to wake up.
+            if !config.pause_indexing && !self.is_running.load(Ordering::SeqCst) {
+                self.start_indexing();
+            }
+            // A plain `&&` chain would keep the queue lock alive for the whole
+            // body and deadlock on the second `lock()`, so ask first, then act.
+            let queue_is_down = { self.embedding_queue.lock().is_none() };
+            if !config.pause_indexing
+                && config.semantic_enabled
+                && !self.is_running.load(Ordering::SeqCst)
+                && queue_is_down
+            {
+                // Take the db handle in its own statement: a guard held across
+                // the `embedding_queue` lock below would invert the crawl's own
+                // lock order (queue, then metadata) and can deadlock.
+                let db = { self.metadata.read().db() };
+                if let Some(db) = db {
+                    let mut q = EmbeddingQueue::new(
+                        ModelRegistry::global().clone(),
+                        Arc::clone(&self.unit_store),
+                        Some(Arc::clone(&self.status)),
+                        Some(Arc::clone(&self.app_handle)),
+                    );
+                    q.query_in_flight = Arc::clone(&self.query_in_flight);
+                    q.start(db);
+                    *self.embedding_queue.lock() = Some(q);
+                }
+            }
+        }
 
         let mut reindex = false;
         if caps_raised {

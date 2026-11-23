@@ -5,6 +5,33 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.24
+- **The "semantic index" is off unless you ask for it.** It was on because a
+  default said so, and on a 776k-file index it is the second heaviest thing
+  after OCR: tens of thousands of files re-read and turned into vectors on
+  every scan, for a ranking bonus most searches never needed. Keyword search
+  over names, paths and contents works without it. Existing configs are moved
+  to "off" once, and the switch is in Settings -> Search -> Semantic search.
+- **The switch now actually stops it.** Turning it off used to apply to the
+  *next* crawl; the worker kept chewing through the queue it had already
+  filled, so "Building the semantic index" stayed on screen. Saving the
+  setting now drains the queue, off the UI thread, and clears the phase.
+- **"Stop" next to the progress bar.** A crawl of a big disk runs for hours
+  and the only way to stop it was a pause switch somewhere else in Settings.
+  The indexing bar at the bottom of the settings page now has a Stop button:
+  it pauses the crawl (the same `pause_indexing` setting, so it survives a
+  restart), keeps everything already indexed, and resumes from where it
+  stopped when `pause_indexing` is turned off again.
+- **The settings footer is buttons again.** The indexing bar sat directly
+  above the save row in the footer, with its own background, border and a wide
+  indeterminate stripe, so the whole strip read as one greyed-out area --
+  that is why "Save" looked unclickable while a scan ran. The bar now lives at
+  the bottom of the page body; the footer is only the save controls.
+- **Adding a folder no longer means typing a path.** Settings -> Folders has
+  a "Browse..." button that opens the system folder picker (multiple
+  selections), next to the existing drag-and-drop and manual field. Adding
+  folders and saving stays possible while indexing runs.
+
 ### 1.0.23
 - **"Update" is an update now, not a re-installation.** The button downloaded
   `kadr-setup.exe` and ran it: a UAC prompt, a setup wizard and a second copy
