@@ -167,5 +167,10 @@
     "pickFolderTitle": "选择收集文件夹",
     "pickFolderHint": "按下收集快捷键后，找到的图片和视频会移动到这里。"
   },
-  "imagesInstead": "所有照片"
+  "imagesInstead": "所有照片",
+  "loadedOf": "{{shown}} / {{total}}",
+  "fillPause": "暂停",
+  "fillPauseHint": "暂停加载列表其余部分。已加载的内容保留。",
+  "waitingForCrawl": "等待索引",
+  "waitingForCrawlHint": "扫描完成后列表会自动加载。可以保持窗口打开。"
 }

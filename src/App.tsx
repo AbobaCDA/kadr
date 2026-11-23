@@ -588,7 +588,6 @@ function App() {
   const loadingRef = useRef(false);
   const resultsLenRef = useRef(0);
   resultsLenRef.current = results.length;
-  const autoFillRef = useRef<string | null>(null);
 
   /** How many rows this page should ask for. */
   const pageSizeFor = (filling: boolean) => {
@@ -597,6 +596,22 @@ function App() {
     if (filling) return listingQueryRef.current ? 500 : 100;
     return 50;
   };
+
+  /* Loading is driven by a pump, not by renders.
+   *
+   * The previous version started a `while` loop inside an effect and stopped it
+   * whenever the effect cleaned up -- which happens on every render that
+   * changes any dependency, i.e. on every page that arrives. The loop was
+   * therefore killed after a page or two, and filling the list fell back to
+   * "scroll and hope". A pump keeps a single timer alive for as long as there is
+   * something left to fetch, and the effect below only says *whether* it should
+   * run; nothing in it can cancel a page in flight.
+   */
+  /* Enough rows for the final count, with a margin: a crawl that finishes
+     while pages are in flight can still hand back rows we already hold, so the
+     comparison is "at least", not "exactly". */
+  const coveredFinalCount = (total: number, shown: number) =>
+    total > 0 && shown >= total;
 
   const loadMore = useCallback(
     async (options?: { auto?: boolean }): Promise<boolean> => {
@@ -612,8 +627,7 @@ function App() {
            halfway: the backend said there was more, one page happened to
            overlap, the grid called the query exhausted, and scrolling stopped
            for good. Instead, walk the cursor forward a bounded number of times.
-           The loop only stops early when the cursor itself stops moving, which
-           is the one condition that really is terminal. */
+           The loop only stops early when the cursor itself stops moving. */
         let cursor = cursorRef.current;
         let offset = resultsLenRef.current;
         let added = 0;
@@ -644,7 +658,7 @@ function App() {
           setCrawlFinished(pageCrawlFinished);
           reportedTotal = res.total ?? 0;
           setTotal(reportedTotal);
-          setTotalExact(res.total_exact ?? true);
+          setTotalExact(res.total_exact ?? false);
           const next = res.next_after ?? null;
           const cursorMoved = next !== null && next !== cursor;
           cursorRef.current = next;
@@ -652,19 +666,22 @@ function App() {
           // already hold.
           offset = resultsLenRef.current + added;
           more = res.has_more ?? true;
-          if (!more || (!cursorMoved && !cursor)) break;
           if (fresh.length > 0) break; // the page did its job
-          if (!cursorMoved) break; // same cursor twice: nothing left to walk
+          // The cursor is the only guarantee of forward progress: if it did not
+          // move, asking again would fetch the same rows forever.
+          if (!cursorMoved) {
+            more = false;
+            break;
+          }
         }
+        const shown = resultsLenRef.current + added;
+        // "Have we got them all?" only has an answer once the count is final.
+        // A ranked query fuses several tiers, so its `total` is a lower bound
+        // and there is no number to reach; those keep paging on demand.
         const complete =
-          !more ||
-          (crawlFinished && reportedTotal > 0 && resultsLenRef.current + added >= reportedTotal);
+          !more || (crawlFinished && coveredFinalCount(reportedTotal, shown));
         setHasMore(!complete);
         if (complete) {
-          // `!more` is the backend's own answer. The second case is the one
-          // this rewrite adds: the crawl has finished, so the count is final
-          // and the rows in memory already cover it -- there is nothing left
-          // that scrolling could reveal.
           setExhaustedKey(requestKey);
         }
         return !complete;
@@ -681,47 +698,133 @@ function App() {
     [query, sort, pageKey, exhaustedKey],
   );
 
-  /* Background fill: keep fetching pages until the match set is complete.
+  /* The pump: one timer, running for as long as a fill is wanted.
    *
-   * Only for a listing (filters/scopes, nothing to rank: `type:image` and
-   * friends), only once the crawl that feeds it has finished -- before that the
-   * total is a moving target and "have we got them all" has no answer -- and
-   * only while the user is not sitting at the bottom of the list waiting for
-   * the next screen, so the foreground path keeps its snappy small pages.
+   * Kept in refs so a render cannot stop it, and deliberately independent of
+   * `results.length`: it re-reads the refs every tick. It stops when the match
+   * set is complete, when the query changes, or when the user has paused it.
    */
-  const canAutoFill =
+  const fillWantedRef = useRef(false);
+  const pumpTimerRef = useRef<number | null>(null);
+  const pumpRef = useRef<() => void>(() => {});
+  const loadMoreRef = useRef(loadMore);
+
+  useEffect(() => {
+    loadMoreRef.current = loadMore;
+  }, [loadMore]);
+
+  const [fillPaused, setFillPaused] = useState(false);
+
+  const stopPump = () => {
+    if (pumpTimerRef.current !== null) {
+      window.clearTimeout(pumpTimerRef.current);
+      pumpTimerRef.current = null;
+    }
+    fillWantedRef.current = false;
+  };
+
+  const startPump = () => {
+    if (pumpTimerRef.current !== null) return; // already running
+    fillWantedRef.current = true;
+    // A page that adds nothing three times in a row means the pager is stuck
+    // (a cursor that points past the tail, a filter the backend interprets
+    // differently than the client). Stopping beats spinning all night on it.
+    let barren = 0;
+    let lastShown = resultsLenRef.current;
+    const tick = async () => {
+      pumpTimerRef.current = null;
+      if (!fillWantedRef.current) return;
+      if (loadingRef.current) {
+        pumpTimerRef.current = window.setTimeout(tick, 40);
+        return;
+      }
+      const more = await loadMoreRef.current({ auto: true });
+      const shown = resultsLenRef.current;
+      barren = shown > lastShown ? 0 : barren + 1;
+      lastShown = shown;
+      if (!fillWantedRef.current || !more || barren >= 3) {
+        fillWantedRef.current = false;
+        setFilling(false);
+        return;
+      }
+      // One page per tick, with a breath between them: the grid has to stay
+      // scrollable while a hundred thousand rows arrive.
+      pumpTimerRef.current = window.setTimeout(tick, 24);
+    };
+    pumpTimerRef.current = window.setTimeout(tick, 0);
+  };
+  pumpRef.current = startPump;
+
+  const [filling, setFilling] = useState(false);
+
+  /* Should the pump be running? Only for a listing (filters/scopes, nothing to
+     rank: `type:image` and friends) whose crawl has finished, so the total is
+     final and "everything" is a number to reach. */
+  const canFill =
     Boolean(query.trim()) &&
     listingQueryRef.current &&
     crawlFinished &&
     hasMore &&
     exhaustedKey !== pageKey &&
-    results.length > 0;
+    results.length > 0 &&
+    !fillPaused;
 
   useEffect(() => {
-    if (!canAutoFill) {
-      if (autoFillRef.current !== null && !hasMore) autoFillRef.current = null;
+    if (!canFill) {
+      stopPump();
+      setFilling(false);
       return;
     }
-    // One fill per query: switching queries starts a new one, and a finished
-    // fill must not restart itself when `results` changes.
-    if (autoFillRef.current === pageKey) return;
+    setFilling(true);
+    startPump();
+    // The pump is stopped by the condition above, not by this cleanup: a
+    // cleanup on every render is what used to kill the fill after one page.
+  }, [canFill, pageKey]);
+
+  // Changing the query cancels everything in flight for the previous one.
+  useEffect(() => {
+    stopPump();
+    setFilling(false);
+    setFillPaused(false);
+  }, [pageKey]);
+
+  /* Waiting for the crawl.
+   *
+   * A listing is only filled automatically once the crawl has finished, and a
+   * crawl of a big disk can finish hours after the query was typed -- at night,
+   * while the app sits there. Without this poll the flag would never update and
+   * the list would stay half loaded until someone typed again, which is exactly
+   * the "came back in the morning and nothing had loaded" case.
+   */
+  const [waitingForCrawl, setWaitingForCrawl] = useState(false);
+  const gateNeeded =
+    Boolean(query.trim()) && listingQueryRef.current && !crawlFinished && hasMore;
+
+  useEffect(() => {
+    setWaitingForCrawl(gateNeeded);
+    if (!gateNeeded) return;
     let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      autoFillRef.current = pageKey;
-      while (!cancelled) {
-        if (loadingRef.current) break;
-        const more = await loadMore({ auto: true });
-        if (cancelled || !more) break;
-        // Yield to the UI between pages: a 100k listing is filled a few hundred
-        // rows at a time and the grid has to stay scrollable while it happens.
-        await new Promise((resolve) => window.setTimeout(resolve, 16));
+    const check = async () => {
+      try {
+        const state = await invoke<{ finished: boolean; indexing: boolean }>("crawl_state");
+        if (cancelled) return;
+        if (state.finished) {
+          setCrawlFinished(true);
+          setWaitingForCrawl(false);
+        }
+      } catch {
+        /* older backend: keep waiting, the scroll path still works */
       }
-    }, 250);
+    };
+    void check();
+    const timer = window.setInterval(check, 15_000);
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      window.clearInterval(timer);
     };
-  }, [canAutoFill, pageKey, loadMore, exhaustedKey, hasMore, results.length, crawlFinished]);
+  }, [gateNeeded, pageKey]);
+
+  useEffect(() => stopPump, []);
 
   // Results never reorder while typing — sort is backend-provided and stable;
   // nothing needed here beyond identity-stable render keys.
@@ -1469,6 +1572,21 @@ function App() {
                 resultCount={results.length}
                 total={total}
                 totalExact={totalExact}
+                shown={results.length}
+                filling={filling}
+                waitingForCrawl={waitingForCrawl}
+                onToggleFill={() => {
+                  // A visible switch for the background fill: a user who wants
+                  // the machine quiet can stop it here instead of closing the
+                  // app, and resume with the same click.
+                  if (filling) {
+                    stopPump();
+                    setFilling(false);
+                    setFillPaused(true);
+                  } else {
+                    setFillPaused(false);
+                  }
+                }}
                 trailing={
                   <button
                     type="button"

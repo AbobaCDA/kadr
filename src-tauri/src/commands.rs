@@ -281,6 +281,28 @@ pub struct UpdateMode {
     pub reason: Option<String>,
 }
 
+/// Whether a crawl has finished walking every watched folder yet.
+///
+/// A listing cannot be filled in the background before this is true: the match
+/// count is still climbing, so "have we got everything" has no answer. The UI
+/// asks this while a listing is on screen, because a crawl can finish hours
+/// after the query was typed -- the alternative is a list that stays half
+/// loaded all night because nobody told it the disk was done.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlState {
+    pub finished: bool,
+    /// True while a crawl is in progress right now.
+    pub indexing: bool,
+}
+
+#[tauri::command]
+pub fn crawl_state(state: State<'_, AppState>) -> CrawlState {
+    CrawlState {
+        finished: crate::indexer::crawl_state::crawl_finished(),
+        indexing: state.indexer.is_crawling() || state.daemon.is_some(),
+    }
+}
+
 #[tauri::command]
 pub fn update_mode() -> UpdateMode {
     let exe = std::env::current_exe()

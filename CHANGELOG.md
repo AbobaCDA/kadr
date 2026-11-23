@@ -5,6 +5,27 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.28
+- **The background fill actually finishes now, and it says how far it has got.**
+  1.0.26 added the fill but it died after a page or two, so the list still ended
+  in scrolling. The loop that fetched pages lived inside a React effect and was
+  cancelled by its own cleanup on every page -- the fill was killed by the very
+  results it was fetching. Loading is now a pump: one timer, kept in refs, that
+  survives renders and stops only on purpose.
+- **"1 240 из 84 231" next to the search field**, with a hairline progress bar
+  that moves while the list fills. Until now the header showed the match count,
+  which does not change as rows arrive, so the only way to tell whether the fill
+  was running was to scroll to the bottom. It is visible from the top now, and
+  it is the answer to "can I leave it overnight".
+- **A fill cannot spin on a stuck pager**: three pages in a row that add no rows
+  stop it instead of running all night. A cursor that does not move is treated
+  as the end of the match set, not as "maybe more".
+- **Waiting for the index is shown, not hidden.** A listing is only filled once
+  the crawl has finished walking the folders; the header says "Ждём индексацию"
+  while that is true and the state is polled every 15 seconds, so a crawl that
+  ends at three in the morning starts the fill by itself.
+- **Pause**: the header control stops the fill without closing the app.
+
 ### 1.0.27
 - **Updates actually replace the file now, for every kind of install.** The
   in-place swap shipped in 1.0.23 but was guarded by two conditions that sent

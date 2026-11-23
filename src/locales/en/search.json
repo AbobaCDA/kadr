@@ -167,5 +167,10 @@
     "pickFolderTitle": "Choose the collection folder",
     "pickFolderHint": "Found images and videos are moved here when you press the collect shortcut."
   },
-  "imagesInstead": "All photos"
+  "imagesInstead": "All photos",
+  "loadedOf": "{{shown}} of {{total}}",
+  "fillPause": "Pause",
+  "fillPauseHint": "Pause loading the rest of the list. What is loaded stays.",
+  "waitingForCrawl": "Waiting for the index",
+  "waitingForCrawlHint": "The list will fill itself as soon as the crawl finishes. The window can stay open."
 }
