@@ -5,6 +5,16 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.25
+- **The update check no longer reads a cached answer.** `version.json` and
+  `SHA256SUMS` are replaced in place on every release, and GitHub's asset CDN
+  keeps them for several minutes. After 1.0.24 was published the release
+  carried the new exe while `/latest/version.json` still answered `1.0.23`, so
+  the check said "up to date". Both files are now fetched through a
+  cache-busting query, which the CDN has no copy of.
+- 1.0.24's changes (semantic index off by default and stoppable, indexing bar
+  out of the settings footer, folder picker) are in this build.
+
 ### 1.0.24
 - **The "semantic index" is off unless you ask for it.** It was on because a
   default said so, and on a 776k-file index it is the second heaviest thing
