@@ -5,6 +5,27 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.26
+- **The first screen of a listing no longer demands scrolling to see the rest.**
+  Thumbnails appeared, and after roughly a thousand rows the grid stopped
+  filling itself and every further screen had to be scrolled for. Two things
+  were behind it, both now fixed:
+  - Pages are asked for explicitly, and a listing is fetched in 500-row pages
+    while the user is not waiting on it (a keyset window is `O(log n + limit)`,
+    so a big page is cheap). A visible, hand-scrolled grid keeps its small
+    pages, so the first screen stays instant.
+  - The "are we done" test was `rows < total`, which cannot converge while the
+    first crawl is still running: the total grows under the pager, and rows the
+    user already scrolled past were counted against a smaller index. The index
+    now records on disk that a crawl has finished walking every folder, the
+    search response carries that as `crawl_finished`, and a background fill
+    runs only when the count is final -- then pages add up to `total` exactly
+    and the fill stops there.
+  - A full listing therefore loads by itself, a few hundred rows at a time,
+    between frames. Nothing is fetched for a text query: ranked tiers fuse
+    several searches per page and cost grows with depth, so those keep paging
+    on demand.
+
 ### 1.0.25
 - **The update check no longer reads a cached answer.** `version.json` and
   `SHA256SUMS` are replaced in place on every release, and GitHub's asset CDN

@@ -111,6 +111,13 @@ export interface SearchResponse {
    */
   has_more?: boolean;
   /**
+   * True once a crawl has walked every watched folder, so `total` is final and
+   * pages add up to it. False while the first scan is still running: then the
+   * count is a snapshot and rows scrolled past were counted against a smaller
+   * index, which is why the grid keeps paging instead of filling itself.
+   */
+  crawl_finished?: boolean;
+  /**
    * Keyset cursor for the next page, in path order. Pass it back as `after`;
    * it is what makes match sets bigger than the ranked window reachable.
    */

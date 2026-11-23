@@ -579,6 +579,16 @@ pub struct SearchResponse {
     /// lower bound (`MAX(tier counts)`) and the UI renders it as "N+".
     #[serde(default)]
     pub total_exact: bool,
+    /// True once the crawl has walked every watched folder at least once, so
+    /// [`Self::total`] is the final count and not a snapshot of a growing
+    /// index.
+    ///
+    /// This is what lets the UI fill the grid in the background instead of
+    /// paging: while a first scan runs, the number of images keeps climbing
+    /// and the rows a user has already scrolled past were never theirs to
+    /// count. Once it is finished, the pages add up to exactly `total`.
+    #[serde(default)]
+    pub crawl_finished: bool,
 }
 
 pub struct SearchDispatcher;
@@ -957,6 +967,7 @@ impl SearchDispatcher {
                 has_more: false,
                 next_after: None,
                 total_exact: true,
+                crawl_finished: true,
             };
         }
 
@@ -1306,6 +1317,7 @@ impl SearchDispatcher {
                 has_more,
                 next_after,
                 total_exact: true,
+                crawl_finished: crate::indexer::crawl_state::crawl_finished(),
             };
         }
 
@@ -1838,6 +1850,7 @@ impl SearchDispatcher {
             has_more,
             next_after: None,
             total_exact,
+            crawl_finished: crate::indexer::crawl_state::crawl_finished(),
         }
     }
 }
@@ -2062,9 +2075,16 @@ fn listing_response(
         has_more,
         next_after,
         total_exact: true,
+        crawl_finished: crate::indexer::crawl_state::crawl_finished(),
     }
 }
 
+/// A listing must say whether its count is final.
+///
+/// That flag is what lets the UI fill a whole listing in the background: while
+/// the first crawl is running the total grows under the pager, so "rows ==
+/// total" never becomes true and the fill would never stop. The answer is read
+/// from the same on-disk marker the crawler writes, so the test drives it.
 /// Enumerates matches for `mode:exhaustive`, ordered by path.
 ///
 /// Fuzzy and semantic tiers are deliberately skipped: they rank, they do not
@@ -2659,6 +2679,18 @@ mod tests {
 
         let ordered = seen.windows(2).all(|pair| pair[0] <= pair[1]);
         assert!(ordered, "a keyset page must stay in path order");
+    }
+
+    #[test]
+    fn listing_reports_whether_the_crawl_has_finished() {
+        use crate::indexer::crawl_state;
+        let store = paged_corpus(5, 0);
+        let first = page("type:image", &store, 50, 0, None, SortOrder::Best);
+        assert_eq!(
+            first.crawl_finished,
+            crawl_state::crawl_finished(),
+            "the response must mirror the crawler's own answer"
+        );
     }
 
     /// Offset paging on a listing still works, for callers that page by number

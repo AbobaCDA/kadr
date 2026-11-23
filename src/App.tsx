@@ -123,6 +123,14 @@ function App() {
      render's array) is what keeps a page from re-adding rows the cursor
      already delivered. */
   const loadedPathsRef = useRef<Set<string>>(new Set());
+  /* True when the current query is a listing ("type:image", a scope, filters)
+     rather than a ranked text search. Only listings are cheap enough to page
+     all the way through in the background. */
+  const listingQueryRef = useRef(false);
+  /* Whether the crawl that feeds this listing has finished. While it has not,
+     the match count is still growing and a background fill would chase a
+     moving target for as long as the disk takes to walk. */
+  const [crawlFinished, setCrawlFinished] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [facetInclude, setFacetInclude] = useState<Set<string>>(new Set());
@@ -403,6 +411,11 @@ function App() {
             }
           }
           resultsQueryRef.current = query.trim();
+          // The backend names the mode it served: "listing" means there is
+          // nothing to rank, so paging is O(log n + limit) and a full listing
+          // can be fetched in the background.
+          listingQueryRef.current = res.mode === "listing";
+          setCrawlFinished(res.crawl_finished ?? false);
           setResults(merged);
           setTotal(res.total ?? merged.length);
           setTotalExact(res.total_exact ?? true);
@@ -545,78 +558,170 @@ function App() {
     };
   }, [results, query, isSetupComplete]);
 
-  /* Infinite scroll guard. A page that adds nothing new marks this query as
-     exhausted, so the grid stops asking. In-flight requests are ref-guarded,
-     so repeated near-end signals can't stack up requests. */
+  /* Filling the list.
+   *
+   * Scrolling used to be the only way to get more rows: one page per near-end
+   * signal, ~50 rows at a time. On a photos folder that means scrolling through
+   * thousands of tiles to see what is there, which is exactly the manual
+   * labour the user should not have to do.
+   *
+   * Two things are needed to fill the grid without being asked, and both were
+   * missing:
+   *
+   * 1. A cheap page size. Listings page by keyset window (O(log n + limit));
+   *    ranked text queries page by offset and cost grows with depth. Pages are
+   *    now asked for explicitly -- big while filling, small for the first
+   *    screen.
+   * 2. A stopping rule that does not lie. `rows.length < total` is not a rule:
+   *    while a first crawl is still running, `total` grows under the pager, and
+   *    rows the user already scrolled past were counted against a smaller
+   *    index, so the count never converges and the fill never ends. The backend
+   *    now says whether the crawl has finished (`crawl_finished`); when it has,
+   *    pages add up to `total` exactly and the fill stops there.
+   *
+   * A visible grid (or a grid the user is actively scrolling) gets a small
+   * page and keeps its lazy behaviour; a fill only happens while the user is
+   * not waiting on it.
+   */
   const pageKey = `${query}\u0000${sort}`;
   const [exhaustedKey, setExhaustedKey] = useState<string | null>(null);
   const loadingRef = useRef(false);
   const resultsLenRef = useRef(0);
   resultsLenRef.current = results.length;
+  const autoFillRef = useRef<string | null>(null);
 
-  const loadMore = useCallback(async () => {
-    if (loadingRef.current || !query.trim() || exhaustedKey === pageKey) return;
-    loadingRef.current = true;
-    setLoadingMore(true);
-    const requestKey = pageKey;
-    try {
-      /* A listing ("all 104 000 images") pages by path cursor; a ranked query
-         pages by offset. Both report `has_more`, so the grid stops when the
-         backend says the match set ended, not when a page happens to look
-         short. */
-      /* A page can come back non-empty and still add nothing new -- rows we
-         already have. Treating that as "the end" was how a long listing died
-         halfway: the backend said there was more, one page happened to overlap,
-         the grid called the query exhausted, and scrolling stopped for good.
-         Instead, walk the cursor forward a bounded number of times. The loop
-         only stops early when the cursor itself stops moving, which is the one
-         condition that really is terminal. */
-      let cursor = cursorRef.current;
-      let offset = resultsLenRef.current;
-      let added = 0;
-      let more = false;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const res = await invoke<SearchResponse>("search", {
-          query: query.trim(),
-          sort,
-          offset: cursor ? undefined : offset,
-          after: cursor ?? undefined,
-        });
-        // Discard a page for a query the user has already left.
-        if (queryRef.current !== query) return;
-        /* `invalidate` runs before the state update: the updater may be deferred
-           to the next render, so counting inside it reported 0 and stopped the
-           scroll early. */
-        const fresh = res.results.filter((row) => !loadedPathsRef.current.has(row.path));
-        for (const row of fresh) loadedPathsRef.current.add(row.path);
-        if (fresh.length > 0) {
-          added += fresh.length;
-          setResults((prev) => [...prev, ...fresh]);
+  /** How many rows this page should ask for. */
+  const pageSizeFor = (filling: boolean) => {
+    // A window over a listing is cheap; the ranked tiers are not, so a text
+    // query stays on modest pages either way.
+    if (filling) return listingQueryRef.current ? 500 : 100;
+    return 50;
+  };
+
+  const loadMore = useCallback(
+    async (options?: { auto?: boolean }): Promise<boolean> => {
+      const auto = options?.auto === true;
+      if (loadingRef.current || !query.trim() || exhaustedKey === pageKey) return false;
+      loadingRef.current = true;
+      if (!auto) setLoadingMore(true);
+      const requestKey = pageKey;
+      const pageLimit = pageSizeFor(auto);
+      try {
+        /* A page can come back non-empty and still add nothing new -- rows we
+           already have. Treating that as "the end" was how a long listing died
+           halfway: the backend said there was more, one page happened to
+           overlap, the grid called the query exhausted, and scrolling stopped
+           for good. Instead, walk the cursor forward a bounded number of times.
+           The loop only stops early when the cursor itself stops moving, which
+           is the one condition that really is terminal. */
+        let cursor = cursorRef.current;
+        let offset = resultsLenRef.current;
+        let added = 0;
+        let more = false;
+        let crawlFinished = false;
+        let reportedTotal = 0;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const res = await invoke<SearchResponse>("search", {
+            query: query.trim(),
+            sort,
+            offset: cursor ? undefined : offset,
+            after: cursor ?? undefined,
+            limit: pageLimit,
+          });
+          // Discard a page for a query the user has already left.
+          if (queryRef.current !== query) return false;
+          /* `invalidate` runs before the state update: the updater may be
+             deferred to the next render, so counting inside it reported 0 and
+             stopped the scroll early. */
+          const fresh = res.results.filter((row) => !loadedPathsRef.current.has(row.path));
+          for (const row of fresh) loadedPathsRef.current.add(row.path);
+          if (fresh.length > 0) {
+            added += fresh.length;
+            setResults((prev) => [...prev, ...fresh]);
+          }
+          const pageCrawlFinished = res.crawl_finished ?? false;
+          crawlFinished = pageCrawlFinished;
+          setCrawlFinished(pageCrawlFinished);
+          reportedTotal = res.total ?? 0;
+          setTotal(reportedTotal);
+          setTotalExact(res.total_exact ?? true);
+          const next = res.next_after ?? null;
+          const cursorMoved = next !== null && next !== cursor;
+          cursorRef.current = next;
+          // Offset paging (ranked queries) has no cursor: advance past what we
+          // already hold.
+          offset = resultsLenRef.current + added;
+          more = res.has_more ?? true;
+          if (!more || (!cursorMoved && !cursor)) break;
+          if (fresh.length > 0) break; // the page did its job
+          if (!cursorMoved) break; // same cursor twice: nothing left to walk
         }
-        setTotal(res.total ?? 0);
-        setTotalExact(res.total_exact ?? true);
-        const next = res.next_after ?? null;
-        const cursorMoved = next !== null && next !== cursor;
-        cursorRef.current = next;
-        // Offset paging (ranked queries) has no cursor: advance past what we
-        // already hold.
-        offset = resultsLenRef.current + added;
-        more = res.has_more ?? true;
-        if (!more || (!cursorMoved && !cursor)) break;
-        if (fresh.length > 0) break; // the page did its job
-        if (!cursorMoved) break; // same cursor twice: nothing left to walk
+        const complete =
+          !more ||
+          (crawlFinished && reportedTotal > 0 && resultsLenRef.current + added >= reportedTotal);
+        setHasMore(!complete);
+        if (complete) {
+          // `!more` is the backend's own answer. The second case is the one
+          // this rewrite adds: the crawl has finished, so the count is final
+          // and the rows in memory already cover it -- there is nothing left
+          // that scrolling could reveal.
+          setExhaustedKey(requestKey);
+        }
+        return !complete;
+      } catch (err) {
+        console.error("Load more error:", err);
+        setHasMore(false);
+        setExhaustedKey(requestKey);
+        return false;
+      } finally {
+        loadingRef.current = false;
+        setLoadingMore(false);
       }
-      setHasMore(more);
-      if (!more) setExhaustedKey(requestKey);
-    } catch (err) {
-      console.error("Load more error:", err);
-      setHasMore(false);
-      setExhaustedKey(requestKey);
-    } finally {
-      loadingRef.current = false;
-      setLoadingMore(false);
+    },
+    [query, sort, pageKey, exhaustedKey],
+  );
+
+  /* Background fill: keep fetching pages until the match set is complete.
+   *
+   * Only for a listing (filters/scopes, nothing to rank: `type:image` and
+   * friends), only once the crawl that feeds it has finished -- before that the
+   * total is a moving target and "have we got them all" has no answer -- and
+   * only while the user is not sitting at the bottom of the list waiting for
+   * the next screen, so the foreground path keeps its snappy small pages.
+   */
+  const canAutoFill =
+    Boolean(query.trim()) &&
+    listingQueryRef.current &&
+    crawlFinished &&
+    hasMore &&
+    exhaustedKey !== pageKey &&
+    results.length > 0;
+
+  useEffect(() => {
+    if (!canAutoFill) {
+      if (autoFillRef.current !== null && !hasMore) autoFillRef.current = null;
+      return;
     }
-  }, [query, sort, pageKey, exhaustedKey]);
+    // One fill per query: switching queries starts a new one, and a finished
+    // fill must not restart itself when `results` changes.
+    if (autoFillRef.current === pageKey) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      autoFillRef.current = pageKey;
+      while (!cancelled) {
+        if (loadingRef.current) break;
+        const more = await loadMore({ auto: true });
+        if (cancelled || !more) break;
+        // Yield to the UI between pages: a 100k listing is filled a few hundred
+        // rows at a time and the grid has to stay scrollable while it happens.
+        await new Promise((resolve) => window.setTimeout(resolve, 16));
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [canAutoFill, pageKey, loadMore, exhaustedKey, hasMore, results.length, crawlFinished]);
 
   // Results never reorder while typing — sort is backend-provided and stable;
   // nothing needed here beyond identity-stable render keys.

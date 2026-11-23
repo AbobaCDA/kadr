@@ -1,5 +1,6 @@
 pub mod arena;
 pub mod burst;
+pub mod crawl_state;
 pub mod content;
 pub mod extract;
 pub mod ignore;
@@ -1330,6 +1331,10 @@ impl IndexerManager {
             }
 
             last_reconcile_unix_secs.store(now_unix_secs(), Ordering::Relaxed);
+            // The walk is over. From here on the match count is final until
+            // files change, which is what lets the UI fill a whole listing in
+            // the background instead of making the user scroll to the end.
+            crate::indexer::crawl_state::mark_crawl_finished();
 
             // Record what this crawl actually did, so "indexing runs every
             // time I open the app" can be diagnosed from the Health tab

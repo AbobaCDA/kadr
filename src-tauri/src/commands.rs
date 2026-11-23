@@ -175,6 +175,10 @@ pub async fn search(
     // Cursors are what make match sets larger than the ranked candidate
     // window reachable at all.
     after: Option<String>,
+    // Page size. The UI asks for a big page when it is filling a listing in
+    // the background and a small one for the first screen; `max_results` stays
+    // the default so older callers keep their behaviour.
+    limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<SearchResponse, String> {
     let started = Instant::now();
@@ -182,9 +186,12 @@ pub async fn search(
     CURRENT_SEARCH_SEQ.store(req_seq, Ordering::SeqCst);
 
     if let Some(daemon) = state.daemon.as_ref() {
+        let page_limit = limit
+            .unwrap_or_else(|| state.indexer.config.read().max_results)
+            .clamp(1, MAX_PAGE_LIMIT);
         let mut resp = daemon.search_page_cursor(
             query.clone(),
-            state.indexer.config.read().max_results,
+            page_limit,
             offset.unwrap_or(0),
             after.as_deref(),
             false,
@@ -204,7 +211,11 @@ pub async fn search(
     // time, so each waited for the other.
     let (max_results, semantic_enabled, aliases) = {
         let cfg = indexer.config.read();
-        (cfg.max_results, cfg.semantic_enabled, cfg.alias_pairs())
+        (
+            limit.unwrap_or(cfg.max_results).clamp(1, MAX_PAGE_LIMIT),
+            cfg.semantic_enabled,
+            cfg.alias_pairs(),
+        )
     };
     // The UI asks for snippets separately (`get_snippets`) so the search
     // itself never touches file contents.
@@ -252,6 +263,12 @@ pub struct SnippetDto {
 
 /// Longest snippet returned to the frontend.
 const MAX_SNIPPET_CHARS: usize = 499;
+
+/// Largest page a client may ask for.
+///
+/// A listing page is a keyset window (O(log n + limit)), so a large page is
+/// cheap; the cap exists so a buggy caller cannot ask for the whole disk.
+const MAX_PAGE_LIMIT: usize = 500;
 /// Upper bound on paths accepted by a single `get_snippets` call.
 const MAX_SNIPPET_PATHS: usize = 50;
 
