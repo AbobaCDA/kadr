@@ -1822,9 +1822,22 @@ function AboutSection({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [updaterError, setUpdaterError] = useState<string | null>(null);
+  /* How the next update will be applied on this machine. Shown, not assumed:
+     "updates reinstall the app" was a complaint that could not be checked from
+     the interface, because the answer depends on the exe's folder. */
+  const [updateMode, setUpdateMode] = useState<
+    { in_place: boolean; exe: string; data_dir: string; reason?: string | null } | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
+    invoke<{ in_place: boolean; exe: string; data_dir: string; reason?: string | null }>(
+      "update_mode",
+    )
+      .then((mode) => {
+        if (!cancelled) setUpdateMode(mode);
+      })
+      .catch(() => undefined);
     getVersion()
       .then((v) => {
         if (!cancelled) setVersion(v);
@@ -2042,6 +2055,28 @@ function AboutSection({
                         className="h-full bg-accent transition-all duration-300"
                         style={{ width: `${updateStatus.progress.percent}%` }}
                       />
+                    </div>
+                  </div>
+                )}
+
+                {/* How this machine updates. Silence here is what made
+                    "it reinstalled again" impossible to argue with. */}
+                {updateMode && (
+                  <div className="flex items-start gap-2 rounded-control border border-line bg-surface-2 px-3 py-2">
+                    <span
+                      className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
+                        updateMode.in_place ? "bg-success/70" : "bg-warning"
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[11px] leading-[16px] text-muted">
+                        {updateMode.in_place
+                          ? t("about.modeInPlace")
+                          : t("about.modeInstaller", { reason: updateMode.reason ?? "" })}
+                      </p>
+                      <p className="truncate font-mono text-[10px] leading-[15px] text-subtle" title={updateMode.exe}>
+                        {updateMode.exe}
+                      </p>
                     </div>
                   </div>
                 )}

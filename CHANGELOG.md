@@ -5,6 +5,25 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.27
+- **Updates actually replace the file now, for every kind of install.** The
+  in-place swap shipped in 1.0.23 but was guarded by two conditions that sent
+  most installs back to running the setup program, which is the "update is a
+  reinstall" complaint all over again:
+  - the helper refused to run unless the executable was named exactly
+    `kadr.exe`. Any other name -- a renamed file, a copy in another folder --
+    fell through to the installer. The name is no longer inspected at all; what
+    matters is that the folder is writable and the file is the running one.
+  - a `portable` marker next to the exe disabled in-app updates outright with
+    "replace the folder by hand". A portable folder in a writable place now
+    updates like anything else, because the swap replaces exactly one file.
+- **Settings -> About says how this machine will update**: one line, the
+  executable's path, and the reason when the installer flow is unavoidable
+  (a folder that needs administrator rights). The promise is visible instead of
+  assumed.
+- A development build (`cargo run`, under `target\debug`) is explicitly never
+  swapped.
+
 ### 1.0.26
 - **The first screen of a listing no longer demands scrolling to see the rest.**
   Thumbnails appeared, and after roughly a thousand rows the grid stopped

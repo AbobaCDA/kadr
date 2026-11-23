@@ -380,19 +380,25 @@ fn sha256_of(path: &std::path::Path) -> Result<String, String> {
 
 /// Initiates download of the chosen asset in a background worker thread.
 pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus, String> {
-    if is_portable_install() {
-        return Err(
-            "This is a portable install: update by replacing the folder with the new portable zip. \
-             In-app updates are disabled so the running copy is never silently replaced by a \
-             second install."
-                .to_string(),
-        );
-    }
-
+    // A `portable` marker next to the exe used to disable in-app updates with
+    // "replace the folder by hand". That is the same reinstall chore in a
+    // different shape, and it is wrong for a folder the user owns: the swap
+    // replaces exactly one file, the exe, and leaves the index and settings
+    // where they are. The marker now only matters when the folder is *not*
+    // writable, and then the installer flow takes over.
+    //
     // An install the user owns can be replaced in place, and then the right
     // download is the portable build: it *is* the application, with no
     // installer to run. See `self_update` for how the swap is carried out.
     let in_place = crate::self_update::can_swap_in_place();
+    if is_portable_install() && !in_place {
+        return Err(
+            "This is a portable install in a folder this user cannot write to, so the running \
+             file cannot be replaced. Move the folder somewhere writable, or replace it with \
+             the new portable build by hand."
+                .to_string(),
+        );
+    }
     let (asset_url, asset_name) = if in_place {
         (PORTABLE_URL, PORTABLE_NAME)
     } else {

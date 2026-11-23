@@ -280,7 +280,9 @@
     "publishedOn": "Released on {{date}}",
     "downloadFailed": "Update download failed: {{error}}",
     "noAssetFound": "No compatible package found for your platform. Please download from GitHub.",
-    "inPlaceNote": "The new version replaces the old one in place: no installer, no setup wizard, no second shortcut."
+    "inPlaceNote": "The new version replaces the old one in place: no installer, no setup wizard, no second shortcut.",
+    "modeInPlace": "Updating replaces the program file only -- no installer, no administrator prompt, no second copy. Settings and the index stay where they are.",
+    "modeInstaller": "This folder is not writable, so updating runs the installer and asks for administrator rights. Reason: {{reason}}"
   },
   "models": {
     "title": "Model files",

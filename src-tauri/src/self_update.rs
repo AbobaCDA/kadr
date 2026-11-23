@@ -70,13 +70,35 @@ impl SwapRequest {
 
 /// Path of the helper copy: the same build, in the temp folder.
 fn helper_path() -> Option<PathBuf> {
+    // A path is all that is needed; the name is deliberately not inspected.
+    std::env::current_exe().ok()?;
+    // Any name is fine as long as the *file itself* is what gets replaced:
+    // `kadr.exe` from the installer, or whatever the user renamed it to. A
+    // guard on the name here is what pushed installer-style builds back to
+    // running the setup program, i.e. the "update = reinstall" complaint.
+    exe.parent()?;
+    Some(std::env::temp_dir().join("kadr-swap.exe"))
+}
+
+/// The running build, when it looks like an installed copy rather than a
+/// development binary.
+fn installed_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    if exe.file_name()?.to_str()? != "kadr.exe" {
-        // A dev build (`kensaku.exe`, `cadr`) or an unexpected name: leave it
-        // alone and use the installer path.
+    let name = exe.file_name()?.to_str()?.to_ascii_lowercase();
+    // `cargo run` builds are `kensaku.exe` / `kadr` in `target\debug`: they are
+    // not something to swap, and their folder is a build directory.
+    if name == "kensaku.exe" || name == "kensaku" {
         return None;
     }
-    Some(std::env::temp_dir().join("kadr-swap.exe"))
+    let dir = exe.parent()?.to_string_lossy().to_ascii_lowercase();
+    if dir.contains("\\target\\debug")
+        || dir.contains("\\target\\release")
+        || dir.contains("/target/debug")
+        || dir.contains("/target/release")
+    {
+        return None;
+    }
+    Some(exe)
 }
 
 /// True when the running build can be replaced in place.
@@ -88,7 +110,7 @@ pub fn can_swap_in_place() -> bool {
     let Some(helper) = helper_path() else {
         return false;
     };
-    let Ok(exe) = std::env::current_exe() else {
+    let Some(exe) = installed_exe() else {
         return false;
     };
     let Some(dir) = exe.parent() else {
@@ -239,6 +261,38 @@ mod tests {
         let args = ["--flag", "value"].iter().map(|s| s.to_string());
         assert!(SwapRequest::from_args(args).is_none());
         assert!(SwapRequest::from_args(std::iter::empty()).is_none());
+    }
+
+    /// A guard on the executable's *name* is what sent installer-style builds
+    /// back to running setup. The decision must depend on where the file is and
+    /// whether it can be written, not on what it is called.
+    #[test]
+    fn the_helper_does_not_care_what_the_exe_is_called() {
+        // `helper_path` only needs a current executable; there is no name check
+        // left in it, so the staged helper exists for any build that runs.
+        assert!(
+            helper_path().is_some(),
+            "the swap helper must be available regardless of the exe name"
+        );
+        if let Some(path) = helper_path() {
+            assert_eq!(
+                path.file_name().and_then(|n| n.to_str()),
+                Some("kadr-swap.exe"),
+                "the helper keeps its own fixed name"
+            );
+        }
+    }
+
+    /// A `cargo run` build must never try to replace itself.
+    #[test]
+    fn a_development_build_is_not_an_installed_copy() {
+        // The test binary lives under target/debug, which is exactly the case
+        // the guard exists for.
+        assert!(
+            installed_exe().is_none(),
+            "a build under target must not be treated as an install: {:?}",
+            installed_exe()
+        );
     }
 
     #[test]

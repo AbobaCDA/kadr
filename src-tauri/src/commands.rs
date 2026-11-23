@@ -261,6 +261,49 @@ pub struct SnippetDto {
     pub snippet: Option<String>,
 }
 
+/// How the next update will be applied on this machine.
+///
+/// Written because "update = run the installer again" was a complaint that
+/// could not be checked from the outside: the answer depends on where the
+/// executable sits and whether this user can write next to it. The settings
+/// panel now shows it, so the promise is visible instead of assumed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateMode {
+    /// True when the running exe can be replaced in place: no installer, no
+    /// UAC prompt, no second copy of the app.
+    pub in_place: bool,
+    /// Full path of the file that would be replaced.
+    pub exe: String,
+    /// Where the app keeps its data, for the "this stays put" reassurance.
+    pub data_dir: String,
+    /// Why the installer flow is used, when it is.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[tauri::command]
+pub fn update_mode() -> UpdateMode {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let data_dir = KensakuConfig::config_dir().to_string_lossy().to_string();
+    let in_place = crate::self_update::can_swap_in_place();
+    UpdateMode {
+        in_place,
+        exe,
+        data_dir,
+        reason: if in_place {
+            None
+        } else {
+            Some(
+                "the app's folder is not writable by this user, so the update runs the \
+                 installer (it asks for administrator rights)"
+                    .to_string(),
+            )
+        },
+    }
+}
+
 /// Longest snippet returned to the frontend.
 const MAX_SNIPPET_CHARS: usize = 499;
 

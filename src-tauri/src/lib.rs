@@ -509,6 +509,7 @@ pub fn run() {
             commands::read_file_content,
             commands::get_config,
             commands::save_config,
+            commands::update_mode,
             commands::is_setup_complete,
             commands::apply_window_mode,
             commands::is_setup_configured,
