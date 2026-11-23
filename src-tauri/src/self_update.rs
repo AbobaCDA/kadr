@@ -70,12 +70,11 @@ impl SwapRequest {
 
 /// Path of the helper copy: the same build, in the temp folder.
 fn helper_path() -> Option<PathBuf> {
-    // A path is all that is needed; the name is deliberately not inspected.
-    std::env::current_exe().ok()?;
-    // Any name is fine as long as the *file itself* is what gets replaced:
-    // `kadr.exe` from the installer, or whatever the user renamed it to. A
-    // guard on the name here is what pushed installer-style builds back to
-    // running the setup program, i.e. the "update = reinstall" complaint.
+    // All that is needed is a current executable to stage a copy of. Its name
+    // is deliberately not inspected: a guard on the name is what pushed
+    // installer-style builds back to running the setup program, i.e. the
+    // "update = reinstall" complaint.
+    let exe = std::env::current_exe().ok()?;
     exe.parent()?;
     Some(std::env::temp_dir().join("kadr-swap.exe"))
 }
