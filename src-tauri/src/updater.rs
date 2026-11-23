@@ -180,6 +180,23 @@ const SUMS_FALLBACK_URL: &str = concat!(
     "https://github.com/AbobaCDA/kadr/releases/download/latest/",
     "SHA256SUMS"
 );
+
+/// URL of a release asset whose contents change while its name does not.
+///
+/// `version.json` and `SHA256SUMS` are replaced in place on every release, and
+/// GitHub's asset CDN caches them for several minutes while quoting that
+/// lifetime to browsers. A build published a minute ago could therefore be
+/// answered with the *previous* file: the release carried 1.0.24 and the check
+/// still read 1.0.23. A query string makes every check a URL the CDN has never
+/// seen, so it goes to the origin. Not a secret, just a cache-buster.
+fn fresh_asset_url(base: &str) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{base}?t={stamp}")
+}
+
 /// The release page, for "View on GitHub" and for the notes.
 const RELEASE_PAGE: &str = "https://github.com/AbobaCDA/kadr/releases/tag/latest";
 
@@ -200,12 +217,24 @@ struct PublishedVersion {
 /// Nothing here is a secret.
 const ROLLING_TAG_NOTE: &str = "Filled in from the release page; this build reads `version.json` instead of the GitHub API.";
 
-/// Checks the rolling `latest` release for a newer build.
-pub fn check_for_update() -> Result<UpdateInfo, String> {
-    let current_version = env!("CARGO_PKG_VERSION");
-
-    let published: PublishedVersion = ureq::get(VERSION_URL)
+/// Reads `version.json` from the rolling release.
+///
+/// The one URL in the updater that changes between builds. GitHub serves
+/// release assets through a CDN that caches them for a few minutes *and* quotes
+/// that lifetime to ordinary browsers, so a build published two minutes ago can
+/// still be answered with the previous answer. That bit once already: the
+/// release carried 1.0.24 while `/latest/version.json` still said 1.0.23, and
+/// the update check happily reported "you are up to date".
+///
+/// Passing the running version as a query string makes each build a different
+/// URL, which the CDN has no copy of, so the first check after a release always
+/// asks the origin. It is a cache-buster, not a secret: the file is public and
+/// its contents are as well.
+fn fetch_published_version(current_version: &str) -> Result<PublishedVersion, String> {
+    let url = fresh_asset_url(VERSION_URL);
+    let published: PublishedVersion = ureq::get(&url)
         .set("User-Agent", &format!("kadr-updater/{}", current_version))
+        .set("Cache-Control", "no-cache")
         .timeout(METADATA_TIMEOUT)
         .call()
         .map_err(|e| format!("Failed to reach the release page: {e}"))?
@@ -215,6 +244,14 @@ pub fn check_for_update() -> Result<UpdateInfo, String> {
     if published.version.trim().is_empty() {
         return Err("The release page published no version".to_string());
     }
+    Ok(published)
+}
+
+/// Checks the rolling `latest` release for a newer build.
+pub fn check_for_update() -> Result<UpdateInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    let published = fetch_published_version(current_version)?;
 
     // Checksums sit next to the installers; the download verifies against them
     // when present, exactly as it did with the API's asset list.
@@ -242,6 +279,22 @@ pub fn check_for_update() -> Result<UpdateInfo, String> {
         asset_url: Some(format!("{DOWNLOAD_BASE}/{asset_name}")),
         asset_name: Some(asset_name),
     })
+}
+
+#[cfg(test)]
+mod fresh_url_tests {
+    use super::{SUMS_FALLBACK_URL, VERSION_URL, fresh_asset_url};
+
+    #[test]
+    fn cache_buster_adds_a_query_and_keeps_the_path() {
+        for base in [VERSION_URL, SUMS_FALLBACK_URL] {
+            let url = fresh_asset_url(base);
+            assert!(url.starts_with(base), "path must not change: {url}");
+            assert!(url.contains("?t="), "a version.json left uncached is a stale one: {url}");
+            let stamp = url.split("?t=").nth(1).expect("stamp");
+            assert!(stamp.parse::<u64>().is_ok(), "stamp must be numeric: {stamp}");
+        }
+    }
 }
 
 /// True when this install is the portable build (a `portable` marker file
@@ -274,11 +327,14 @@ fn expected_sha256(asset_name: &str) -> Result<Option<String>, String> {
         return Ok(None);
     };
 
-    let body = ureq::get(&url)
+    // The checksums are rewritten on every release, so they are read the same
+    // way: a URL the CDN has not cached, not the plain tag path.
+    let body = ureq::get(&fresh_asset_url(&url))
         .set(
             "User-Agent",
             &format!("kensaku-updater/{}", env!("CARGO_PKG_VERSION")),
         )
+        .set("Cache-Control", "no-cache")
         .timeout(METADATA_TIMEOUT)
         .call()
         .map_err(|e| format!("Could not fetch checksums: {e}"))?
