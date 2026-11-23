@@ -2071,12 +2071,13 @@ impl IndexerManager {
             // `stop()` joins the worker, which can be in the middle of an
             // embedding pass; doing that on the command thread would freeze
             // the settings panel. Take the queue out and stop it off-thread.
-            let queue = self
-                .embedding_queue
-                .lock()
-                .take();
-            if let Some(mut queue) = queue {
-                std::thread::spawn(move || queue.stop());
+            //
+            // The lock is released before the thread is spawned on purpose: the
+            // guard below is a temporary, and holding it across the spawn would
+            // keep `embedding_queue` locked until the end of the statement.
+            let previous_queue = { self.embedding_queue.lock().take() };
+            if let Some(mut previous_queue) = previous_queue {
+                std::thread::spawn(move || previous_queue.stop());
             }
             // The queue is gone, so nothing will ever clear the "embedding"
             // phase it set -- the status bar would keep claiming it is
