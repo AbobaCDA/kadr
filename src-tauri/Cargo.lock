@@ -2940,7 +2940,7 @@ dependencies = [
  "open",
  "ort",
  "paddleocr_rs_onnx",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "quick-xml",
  "rayon",
  "regex",
