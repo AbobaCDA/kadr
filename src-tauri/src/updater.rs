@@ -380,6 +380,16 @@ fn sha256_of(path: &std::path::Path) -> Result<String, String> {
 
 /// Initiates download of the chosen asset in a background worker thread.
 pub fn download_update(asset_url: &str, asset_name: &str) -> Result<UpdateStatus, String> {
+    // A copy that lives in a folder the user filled with their own files must
+    // never be updated by the installer: it uninstalls the previous version
+    // first and deletes that folder. Refuse before downloading anything, and
+    // say why -- silence here is what made the risk invisible.
+    if let Some(refusal) = crate::install_guard::installer_refusal()
+        && !crate::self_update::can_swap_in_place()
+    {
+        return Err(refusal);
+    }
+
     // A `portable` marker next to the exe used to disable in-app updates with
     // "replace the folder by hand". That is the same reinstall chore in a
     // different shape, and it is wrong for a folder the user owns: the swap
@@ -584,7 +594,12 @@ pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
         // Preferred path: swap the executable, restart, done. No installer, no
         // UAC, no second copy of the app -- which is the whole complaint about
         // "updating" by re-installing.
-        if crate::self_update::can_swap_in_place() {
+        //
+        // The reason is logged when it cannot be done. It used to be a silent
+        // `false`, so "the update reinstalled again" was undebuggable from the
+        // outside; the same reason is what Settings -> About shows.
+        let blocker = crate::self_update::swap_blocker();
+        if blocker.is_none() {
             match crate::self_update::spawn_swap_helper(&path) {
                 Ok(_) => {
                     crate::say_err!("[Kadr] update: swapping the executable in place");
@@ -592,10 +607,21 @@ pub fn install_and_restart(app: &AppHandle) -> Result<(), String> {
                     return Ok(());
                 }
                 Err(e) => crate::say_err!(
-                    "[Kadr] in-place update unavailable ({e}); running the installer instead"
+                    "[Kadr] in-place update failed to start ({e}); running the installer instead"
                 ),
             }
+        } else if let Some(reason) = blocker {
+            crate::say_err!("[Kadr] in-place update unavailable: {reason}");
         }
+
+        // The installer path is an uninstall followed by an install, and the
+        // uninstaller deletes the runtime data folder (that is what
+        // "uninstalling a full cleanup" means in nsis/hooks.nsh). The daemon
+        // keeps that folder open and writes into it, so it has to stop first:
+        // two writers and a delete in the middle is how the thumbnail cache
+        // disappeared after an update. The in-place swap above returns before
+        // this point and deliberately leaves the daemon alone.
+        crate::daemon::stop_running_daemon();
 
         if path_str.ends_with(".msi") {
             let mut cmd = std::process::Command::new("msiexec");

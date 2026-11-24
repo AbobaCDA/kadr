@@ -1825,15 +1825,23 @@ function AboutSection({
   /* How the next update will be applied on this machine. Shown, not assumed:
      "updates reinstall the app" was a complaint that could not be checked from
      the interface, because the answer depends on the exe's folder. */
-  const [updateMode, setUpdateMode] = useState<
-    { in_place: boolean; exe: string; data_dir: string; reason?: string | null } | null
-  >(null);
+  const [updateMode, setUpdateMode] = useState<{
+    in_place: boolean;
+    exe: string;
+    data_dir: string;
+    reason?: string | null;
+    installer_refusal?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    invoke<{ in_place: boolean; exe: string; data_dir: string; reason?: string | null }>(
-      "update_mode",
-    )
+    invoke<{
+      in_place: boolean;
+      exe: string;
+      data_dir: string;
+      reason?: string | null;
+      installer_refusal?: string | null;
+    }>("update_mode")
       .then((mode) => {
         if (!cancelled) setUpdateMode(mode);
       })
@@ -2077,6 +2085,14 @@ function AboutSection({
                       <p className="truncate font-mono text-[10px] leading-[15px] text-subtle" title={updateMode.exe}>
                         {updateMode.exe}
                       </p>
+                      {/* The installer deletes the folder it installs into, so a
+                          copy living among the user's own files is refused
+                          instead of updated that way. */}
+                      {updateMode.installer_refusal && (
+                        <p className="mt-1 text-[11px] leading-[16px] text-warning">
+                          {t("about.installerRefused")}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

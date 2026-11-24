@@ -279,6 +279,10 @@ pub struct UpdateMode {
     /// Why the installer flow is used, when it is.
     #[serde(default)]
     pub reason: Option<String>,
+    /// Set when the installer must not be used at all because this copy lives
+    /// in a folder the user filled themselves.
+    #[serde(default)]
+    pub installer_refusal: Option<String>,
 }
 
 /// Whether a crawl has finished walking every watched folder yet.
@@ -309,20 +313,18 @@ pub fn update_mode() -> UpdateMode {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let data_dir = KensakuConfig::config_dir().to_string_lossy().to_string();
-    let in_place = crate::self_update::can_swap_in_place();
+    // Two independent answers: can the exe be swapped, and is the folder one the
+    // installer must not touch. Both are shown, because they mean different
+    // things to the user ("the installer will ask for rights" vs "the installer
+    // is refused, your folder stays").
+    let blocker = crate::self_update::swap_blocker();
+    let installer_refusal = crate::install_guard::installer_refusal();
     UpdateMode {
-        in_place,
+        in_place: blocker.is_none(),
         exe,
         data_dir,
-        reason: if in_place {
-            None
-        } else {
-            Some(
-                "the app's folder is not writable by this user, so the update runs the \
-                 installer (it asks for administrator rights)"
-                    .to_string(),
-            )
-        },
+        reason: blocker,
+        installer_refusal,
     }
 }
 

@@ -282,7 +282,8 @@
     "noAssetFound": "No compatible package found for your platform. Please download from GitHub.",
     "inPlaceNote": "The new version replaces the old one in place: no installer, no setup wizard, no second shortcut.",
     "modeInPlace": "Updating replaces the program file only -- no installer, no administrator prompt, no second copy. Settings and the index stay where they are.",
-    "modeInstaller": "This folder is not writable, so updating runs the installer and asks for administrator rights. Reason: {{reason}}"
+    "modeInstaller": "This folder is not writable, so updating runs the installer and asks for administrator rights. Reason: {{reason}}",
+    "installerRefused": "The installer is blocked for this copy: it deletes the folder it installs into, and this one holds your files. The in-place file swap still works and leaves the folder alone."
   },
   "models": {
     "title": "Model files",

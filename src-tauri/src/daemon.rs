@@ -336,6 +336,52 @@ impl DaemonClient {
     }
 }
 
+/// Stops a running daemon before the installed copy is replaced or removed.
+///
+/// This is the one thing that can actually damage a user's data during an
+/// update. The daemon owns the index: metadata DB, content index, unit store and
+/// the thumbnails folder. While it runs it keeps writing -- journal files, WAL,
+/// freshly rendered thumbnails -- and an installer that uninstalls the previous
+/// version first deletes `%APPDATA%\kensaku` beneath it. Two writers, one
+/// directory, a delete in between: that is how the thumbnail cache went missing
+/// after an update, and it is also how an index can be left half-written.
+///
+/// Called on the installer path, because that path *is* an uninstall+install.
+/// The in-place swap does not need it (it replaces one file, and the daemon is
+/// not the running app), but calling it there too would be wrong: it would
+/// stop a daemon the user relies on for no reason.
+pub fn stop_running_daemon() {
+    if read_token().is_none() {
+        return; // no daemon token on this machine: nothing is running
+    }
+    // The daemon's own exit door. `shutdown` lets it finish the current write
+    // and close the DB; killing the process instead would be the crash we are
+    // trying to avoid.
+    let _ = request("shutdown", serde_json::json!({}));
+    // Give it a moment to close its files, then make sure it is gone: the
+    // installer deletes the data folder a second later.
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if !daemon_is_alive() {
+            crate::say_err!("[Kadr] daemon stopped before the update");
+            return;
+        }
+    }
+    crate::say_err!(
+        "[Kadr] daemon did not stop in time; the installer will terminate it. \
+         The index stays in place: the stop is not a delete."
+    );
+}
+
+/// True when something answers on the daemon socket.
+fn daemon_is_alive() -> bool {
+    use interprocess::local_socket::prelude::*;
+    let Ok(name) = socket_name() else {
+        return false;
+    };
+    LocalSocketStream::connect(name).is_ok()
+}
+
 #[cfg(unix)]
 fn daemon_binary_path() -> Option<std::path::PathBuf> {
     let name = "kensaku-daemon";

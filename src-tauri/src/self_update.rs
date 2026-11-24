@@ -102,34 +102,71 @@ fn installed_exe() -> Option<PathBuf> {
 
 /// True when the running build can be replaced in place.
 ///
-/// The test is concrete, not guessed: try to create a file next to the exe. A
-/// `Program Files` install answers "no" (the user is not an administrator), and
-/// those users keep the installer flow, which is what a UAC prompt is for.
+/// Three separate things have to be true, and each failure has its own reason
+/// in [`swap_blocker`], because "it ran the installer again" is exactly the
+/// symptom nobody could diagnose from the outside.
+///
+/// The write test is the honest one: create a file next to the exe and rename a
+/// file inside the folder. A `Program Files` install answers "no" (the user is
+/// not an administrator) and those users keep the installer flow, which is what
+/// a UAC prompt is for.
 pub fn can_swap_in_place() -> bool {
-    let Some(helper) = helper_path() else {
-        return false;
-    };
+    swap_blocker().is_none()
+}
+
+/// Why an in-place swap is impossible, or `None` when it will work.
+///
+/// Returned instead of a bare boolean so the settings panel can say *which*
+/// condition failed on this machine; a swallowed reason is how the app spent
+/// three releases promising a swap it never performed.
+pub fn swap_blocker() -> Option<String> {
     let Some(exe) = installed_exe() else {
-        return false;
+        return Some(
+            "this is a development build (a file under target/), not an installed copy".to_string(),
+        );
     };
     let Some(dir) = exe.parent() else {
-        return false;
+        return Some("the executable has no parent folder".to_string());
     };
+    let Some(_helper) = helper_path() else {
+        return Some("could not resolve the running executable".to_string());
+    };
+
+    // Can anything be created in this folder at all?
     let probe = dir.join(".kadr-write-probe");
-    match std::fs::OpenOptions::new()
+    if let Err(e) = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&probe)
     {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            // A stale helper from a crashed attempt must not block the next one.
-            let _ = std::fs::remove_file(&helper);
-            true
-        }
-        Err(_) => false,
+        return Some(format!(
+            "the app's folder cannot be written to by this user ({e}); it needs administrator \
+             rights, so the update runs the installer"
+        ));
     }
+    // Creating a file is not the same as being allowed to replace one: the
+    // swap renames a file over another, and a group-policy or an ACL can allow
+    // the first and refuse the second.
+    let rename_from = dir.join(".kadr-rename-probe");
+    let rename_to = dir.join(".kadr-rename-probe-2");
+    let rename_ok = std::fs::write(&rename_from, b"1").is_ok()
+        && std::fs::rename(&rename_from, &rename_to).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    let _ = std::fs::remove_file(&rename_from);
+    let _ = std::fs::remove_file(&rename_to);
+    if !rename_ok {
+        return Some(
+            "files in the app's folder can be created but not replaced, so the executable cannot \
+             be swapped; the update runs the installer"
+                .to_string(),
+        );
+    }
+    // A stale helper from a crashed attempt must not block the next one.
+    if let Some(helper) = helper_path() {
+        let _ = std::fs::remove_file(&helper);
+    }
+    None
 }
 
 /// Starts the helper that will replace the running exe after this process ends.

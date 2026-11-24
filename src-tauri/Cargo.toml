@@ -1,6 +1,6 @@
 [package]
 name = "kensaku"
-version = "1.0.28"
+version = "1.0.29"
 default-run = "kensaku"
 description = "Blazing-fast local file and content search"
 authors = ["yjid"]

@@ -16,6 +16,7 @@ pub mod ocr_indra;
 pub mod preview;
 pub mod query;
 pub mod search;
+pub mod install_guard;
 pub mod self_update;
 pub mod tray_icon;
 pub mod updater;
@@ -302,6 +303,10 @@ fn maybe_apply_pending_reset() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Written once, on the first launch of this copy: which folder it lives in
+    // and whether that folder is the user's own. The update path reads it to
+    // decide whether the installer may touch that folder at all.
+    crate::install_guard::remember_install();
     // Install the crash log hook before anything else so startup failures are
     // captured too. It only touches the config directory path; it never loads
     // or mutates the config.

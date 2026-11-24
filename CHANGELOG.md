@@ -5,6 +5,30 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.29
+- **The installer can no longer delete a folder that holds your files.** This is
+  the serious one. On the installer path Windows first uninstalls the previous
+  version, and the uninstaller removes the install directory. For a normal
+  install that is `%LOCALAPPDATA%\Programs\kadr` and it is correct; for a copy
+  unpacked somewhere else it means "delete the folder the user put their things
+  in". That is also the likely reason the thumbnail cache vanished after an
+  update: the uninstaller wiped the runtime data folder while the daemon was
+  still writing thumbnails into it.
+  - Kadr records, on first run, which folder it lives in and whether that folder
+    is the user's own (a `portable` marker, a `data` folder beside the exe, or
+    any name other than `kadr`).
+  - The installer path is **refused** for such a folder, with the reason shown
+    in Settings -> About. The in-place file swap is unaffected: it replaces one
+    file and leaves the folder alone.
+  - A running daemon is stopped cleanly (its own `shutdown`, waiting for it to
+    exit) before the installer starts, so nothing is writing into the data
+    folder while it is being removed.
+- **The update screen now says why the installer was used.** The in-place check
+  is three separate conditions (is the folder writable, can a file in it be
+  replaced, is this a development build), and the failing one is reported in
+  Settings -> About and in the log instead of being a silent `false` -- which is
+  what made "it reinstalled again" impossible to explain.
+
 ### 1.0.28
 - **The background fill actually finishes now, and it says how far it has got.**
   1.0.26 added the fill but it died after a page or two, so the list still ended
