@@ -5,6 +5,17 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### 1.0.30
+- **The "collection" card was buried at the very bottom of the General tab, so
+  the button that moves files was effectively unfindable.** It is now its own
+  section, *Collection*, in the settings sidebar — with a one-line instruction
+  at the top of it: find the file, select it with ↑ ↓, press the shortcut, or
+  right-click the result → "To collection folder".
+  - The shortcut field now always shows a key (`Ctrl+D` by default) even when
+    the saved config left it empty, instead of rendering an empty button.
+  - Shortcut recording keeps the `ksCapture` guard, so pressing a combination
+    while recording does not also trigger the app's own hotkeys.
+
 ### 1.0.29
 - **The installer can no longer delete a folder that holds your files.** This is
   the serious one. On the installer path Windows first uninstalls the previous

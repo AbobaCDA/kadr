@@ -9,7 +9,8 @@
     "ai": "Meaning search",
     "agents": "Agents",
     "doctor": "Health",
-    "about": "About"
+    "about": "About",
+    "collection": "Collection"
   },
   "meta": {
     "general": {
@@ -51,6 +52,10 @@
     "about": {
       "title": "About",
       "description": "Version, thesis and the reset control."
+    },
+    "collection": {
+      "title": "Collection",
+      "description": "Where the files go, and which key sends them there."
     }
   },
   "footer": {
@@ -451,6 +456,8 @@
     "modeMove": "Move the file",
     "modeCopy": "Copy the file",
     "modeDescription": "Moving takes the file out of its old folder; copying leaves it there.",
-    "pressKeys": "Press keys…"
+    "pressKeys": "Press keys…",
+    "howto": "To move a file: find it, select it with ↑ ↓ and press {{hotkey}}. Or right-click the result → “To collection folder”.",
+    "hotkeyDefault": "Ctrl+D"
   }
 }

@@ -10,6 +10,7 @@ import {
   Check,
   Copy,
   Filter,
+  FolderInput,
   FolderTree,
   Info,
   Plus,
@@ -63,6 +64,7 @@ type SectionId =
   | "folders"
   | "exclusions"
   | "search"
+  | "collection"
   | "ai"
   | "beta"
   | "agents"
@@ -75,6 +77,10 @@ const SECTIONS = [
   { id: "folders", labelKey: "sections.folders", icon: FolderTree },
   { id: "exclusions", labelKey: "sections.exclusions", icon: Filter },
   { id: "search", labelKey: "sections.search", icon: Search },
+  /* Its own section: the collection block used to sit at the bottom of
+     General, where nobody looking for "the button that moves files" would
+     think to scroll. */
+  { id: "collection", labelKey: "sections.collection", icon: FolderInput },
   { id: "ai", labelKey: "sections.ai", icon: Sparkles },
   { id: "agents", labelKey: "sections.agents", icon: Bot },
   { id: "doctor", labelKey: "sections.doctor", icon: Stethoscope },
@@ -289,6 +295,8 @@ function renderSection(
       return <ExclusionsSection config={config} setConfig={setConfig} />;
     case "search":
       return <SearchSection config={config} setConfig={setConfig} />;
+    case "collection":
+      return <CollectionSection config={config} setConfig={setConfig} />;
     case "ai":
       return <AiSection config={config} setConfig={setConfig} />;
     case "agents":
@@ -348,9 +356,6 @@ function GeneralSection({
   const { theme, setTheme } = useTheme();
   const { language, setLanguage, supportedLanguages } = useLanguage();
   const [capturing, setCapturing] = useState(false);
-  /* Separate capture flag for the collect shortcut: it is an in-window key, so
-     it is recorded the same way but stored in its own config field. */
-  const [capturingCollect, setCapturingCollect] = useState(false);
 
   /* null = unknown (backend rejected get_autostart) → switch stays off. */
   const [autostart, setAutostart] = useState<boolean | null>(null);
@@ -424,42 +429,6 @@ function GeneralSection({
       window.removeEventListener("keydown", onKey);
     };
   }, [capturing, setConfig]);
-
-  /* Captures the collect shortcut. Same accumulate-modifiers approach as the
-     invocation key above, but modifiers alone are rejected: unlike a global
-     summon key, this one needs a real key to press while browsing. */
-  useEffect(() => {
-    if (!capturingCollect) return;
-    document.body.dataset.ksCapture = "1";
-    const pressed = new Set<string>();
-    const normalizeModifier = (key: string) => (key === "Meta" ? "Cmd" : key);
-    const onKey = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.repeat) return;
-      if (e.key === "Escape") {
-        setCapturingCollect(false);
-        return;
-      }
-      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
-        pressed.add(normalizeModifier(e.key));
-        return;
-      }
-      const parts = [
-        ...["Ctrl", "Cmd", "Alt", "Shift"].filter((modifier) => pressed.has(modifier)),
-      ];
-      if (parts.length === 0) return; // a bare letter would swallow typing
-      const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const spec = [...parts, key].join("+");
-      setConfig((c) => (c ? { ...c, collect_hotkey: spec } : c));
-      setCapturingCollect(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      delete document.body.dataset.ksCapture;
-    };
-  }, [capturingCollect, setConfig]);
 
   return (
     <>
@@ -590,67 +559,6 @@ function GeneralSection({
         )}
       </Card>
 
-      <Card title={t("collect.title")}>
-        <Field label={t("collect.folder")} description={t("collect.description")}>
-          <div className="flex min-w-0 items-center gap-2">
-            <span
-              className={`max-w-56 truncate font-mono text-[11.5px] ${
-                config.collect_dir ? "text-fg" : "text-subtle"
-              }`}
-              title={config.collect_dir ?? undefined}
-            >
-              {config.collect_dir ?? t("collect.folderUnset")}
-            </span>
-            <button
-              type="button"
-              onClick={async () => {
-                const { open } = await import("@tauri-apps/plugin-dialog");
-                const picked = await open({
-                  directory: true,
-                  multiple: false,
-                  defaultPath: config.collect_dir ?? undefined,
-                });
-                if (typeof picked === "string" && picked !== "") {
-                  setConfig((c) => (c ? { ...c, collect_dir: picked } : c));
-                }
-              }}
-              className="h-8 shrink-0 rounded-control border border-line bg-accent-soft px-3 text-[12px] text-fg transition-colors hover:border-line-strong"
-            >
-              {config.collect_dir ? t("collect.change") : t("collect.choose")}
-            </button>
-          </div>
-        </Field>
-
-        <Field label={t("collect.hotkey")} description={t("collect.hotkeyDescription")}>
-          <button
-            type="button"
-            onClick={() => setCapturingCollect(true)}
-            className={`flex h-8 min-w-36 items-center justify-center rounded-control border px-3 font-mono text-[12px] transition-colors duration-150 ${
-              capturingCollect
-                ? "border-accent text-accent"
-                : "border-line bg-accent-soft text-fg hover:border-line-strong"
-            }`}
-          >
-            {capturingCollect ? t("collect.pressKeys") : (config.collect_hotkey ?? "Ctrl+D")}
-          </button>
-        </Field>
-
-        <Field label={t("collect.mode")} description={t("collect.modeDescription")}>
-          <div className="flex items-center gap-1 rounded-control border border-line p-0.5">
-            {(["move", "copy"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                data-active={(config.collect_mode ?? "move") === mode}
-                onClick={() => setConfig((c) => (c ? { ...c, collect_mode: mode } : c))}
-                className="seg !px-3"
-              >
-                {t(mode === "move" ? "collect.modeMove" : "collect.modeCopy")}
-              </button>
-            ))}
-          </div>
-        </Field>
-      </Card>
     </>
   );
 }
@@ -803,6 +711,131 @@ function FoldersSection({
             })}
           </p>
         )}
+      </Card>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Collection                                                        */
+/* ---------------------------------------------------------------- */
+
+function CollectionSection({
+  config,
+  setConfig,
+}: {
+  config: KensakuConfig;
+  setConfig: React.Dispatch<React.SetStateAction<KensakuConfig | null>>;
+}) {
+  const { t } = useTranslation("settings");
+  const [capturingCollect, setCapturingCollect] = useState(false);
+
+  /* Захват клавиши переноса: та же схема накопления модификаторов, но здесь
+     нужна реальная клавиша — этим сочетанием пользуются во время просмотра
+     результатов. ksCapture гасит собственные хоткеи App, пока идёт запись. */
+  useEffect(() => {
+    if (!capturingCollect) return;
+    document.body.dataset.ksCapture = "1";
+    const pressed = new Set<string>();
+    const normalizeModifier = (key: string) => (key === "Meta" ? "Cmd" : key);
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      if (e.key === "Escape") {
+        setCapturingCollect(false);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+        pressed.add(normalizeModifier(e.key));
+        return;
+      }
+      const parts = [
+        ...["Ctrl", "Cmd", "Alt", "Shift"].filter((modifier) => pressed.has(modifier)),
+      ];
+      if (parts.length === 0) return; // a bare letter would swallow typing
+      const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+      const spec = [...parts, key].join("+");
+      setConfig((c) => (c ? { ...c, collect_hotkey: spec } : c));
+      setCapturingCollect(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      delete document.body.dataset.ksCapture;
+    };
+  }, [capturingCollect, setConfig]);
+
+
+  return (
+    <>
+      <Card title={t("collect.title")}>
+        <p className="border-b border-line px-4 py-3 text-[12px] leading-relaxed text-muted">
+          {t("collect.howto", {
+            hotkey: config.collect_hotkey || t("collect.hotkeyDefault"),
+          })}
+        </p>
+        <Field label={t("collect.folder")} description={t("collect.description")}>
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className={`max-w-56 truncate font-mono text-[11.5px] ${
+                config.collect_dir ? "text-fg" : "text-subtle"
+              }`}
+              title={config.collect_dir ?? undefined}
+            >
+              {config.collect_dir ?? t("collect.folderUnset")}
+            </span>
+            <button
+              type="button"
+              onClick={async () => {
+                const { open } = await import("@tauri-apps/plugin-dialog");
+                const picked = await open({
+                  directory: true,
+                  multiple: false,
+                  defaultPath: config.collect_dir ?? undefined,
+                });
+                if (typeof picked === "string" && picked !== "") {
+                  setConfig((c) => (c ? { ...c, collect_dir: picked } : c));
+                }
+              }}
+              className="h-8 shrink-0 rounded-control border border-line bg-accent-soft px-3 text-[12px] text-fg transition-colors hover:border-line-strong"
+            >
+              {config.collect_dir ? t("collect.change") : t("collect.choose")}
+            </button>
+          </div>
+        </Field>
+
+        <Field label={t("collect.hotkey")} description={t("collect.hotkeyDescription")}>
+          <button
+            type="button"
+            onClick={() => setCapturingCollect(true)}
+            className={`flex h-8 min-w-36 items-center justify-center rounded-control border px-3 font-mono text-[12px] transition-colors duration-150 ${
+              capturingCollect
+                ? "border-accent text-accent"
+                : "border-line bg-accent-soft text-fg hover:border-line-strong"
+            }`}
+          >
+            {capturingCollect
+              ? t("collect.pressKeys")
+              : config.collect_hotkey || t("collect.hotkeyDefault")}
+          </button>
+        </Field>
+
+        <Field label={t("collect.mode")} description={t("collect.modeDescription")}>
+          <div className="flex items-center gap-1 rounded-control border border-line p-0.5">
+            {(["move", "copy"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                data-active={(config.collect_mode ?? "move") === mode}
+                onClick={() => setConfig((c) => (c ? { ...c, collect_mode: mode } : c))}
+                className="seg !px-3"
+              >
+                {t(mode === "move" ? "collect.modeMove" : "collect.modeCopy")}
+              </button>
+            ))}
+          </div>
+        </Field>
       </Card>
     </>
   );

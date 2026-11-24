@@ -9,7 +9,8 @@
     "ai": "语义搜索",
     "agents": "智能体",
     "doctor": "健康检查",
-    "about": "关于"
+    "about": "关于",
+    "collection": "收藏夹"
   },
   "meta": {
     "general": {
@@ -51,6 +52,10 @@
     "about": {
       "title": "关于",
       "description": "版本、设计理念和重置控件。"
+    },
+    "collection": {
+      "title": "收藏夹",
+      "description": "文件去向以及发送文件的快捷键。"
     }
   },
   "footer": {
@@ -451,6 +456,8 @@
     "modeMove": "移动文件",
     "modeCopy": "复制文件",
     "modeDescription": "移动会把文件从原文件夹取走，复制则保留原文件。",
-    "pressKeys": "请按快捷键…"
+    "pressKeys": "请按快捷键…",
+    "howto": "如何移动文件：找到文件后，用 ↑ ↓ 选中并按 {{hotkey}}；或右键点击结果 →「移入收藏文件夹」。",
+    "hotkeyDefault": "Ctrl+D"
   }
 }
